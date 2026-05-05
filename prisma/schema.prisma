@@ -1,0 +1,475 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth ────────────────────────────────────────────────
+
+model Admin {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  isVerified   Boolean   @default(false) @map("is_verified")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  otps     Otp[]
+  sessions Session[]
+
+  @@map("admins")
+}
+
+model Otp {
+  id        String   @id @default(cuid())
+  adminId   String   @map("admin_id")
+  otp       String
+  expiresAt DateTime @map("expires_at")
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("otps")
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  adminId    String   @map("admin_id")
+  token      String   @unique
+  expiresAt  DateTime @map("expires_at")
+  deviceInfo String?  @map("device_info")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ─── Users (Customers) ───────────────────────────────────
+
+model User {
+  id          String   @id @default(cuid())
+  name        String
+  email       String?  @unique
+  phone       String   @unique
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  bookings    Booking[]
+  orders      Order[]
+  payments    Payment[]
+  invoices    Invoice[]
+
+  @@map("users")
+}
+
+// ─── Categories ──────────────────────────────────────────
+
+enum CategoryType {
+  SERVICE
+  PRODUCT
+  BOTH
+}
+
+model Category {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  slug        String       @unique
+  type        CategoryType @default(BOTH)
+  parentId    String?      @map("parent_id")
+  description String?
+  imageUrl    String?      @map("image_url")
+  isActive    Boolean      @default(true) @map("is_active")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  parent      Category?    @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[]   @relation("CategoryTree")
+  services    Service[]
+  products    Product[]
+
+  @@map("categories")
+}
+
+// ─── Vehicle Types ───────────────────────────────────────
+
+model VehicleType {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  servicePricings ServicePricing[]
+
+  @@map("vehicle_types")
+}
+
+// ─── Services ────────────────────────────────────────────
+
+model Service {
+  id           String   @id @default(cuid())
+  categoryId   String?  @map("category_id")
+  name         String
+  slug         String   @unique
+  description  String?
+  price        Decimal  @db.Decimal(10, 2)
+  durationMins Int      @map("duration_mins")
+  images       String[] @default([])
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  category  Category?        @relation(fields: [categoryId], references: [id])
+  bookings  Booking[]
+  pricings  ServicePricing[]
+
+  @@map("services")
+}
+
+model ServicePricing {
+  id            String   @id @default(cuid())
+  serviceId     String   @map("service_id")
+  vehicleTypeId String   @map("vehicle_type_id")
+  price         Decimal  @db.Decimal(10, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  vehicleType VehicleType @relation(fields: [vehicleTypeId], references: [id])
+
+  @@unique([serviceId, vehicleTypeId])
+  @@map("service_pricings")
+}
+
+// ─── Products ────────────────────────────────────────────
+
+model Product {
+  id            String   @id @default(cuid())
+  categoryId    String?  @map("category_id")
+  name          String
+  slug          String   @unique
+  description   String?
+  price         Decimal  @db.Decimal(10, 2)
+  discountPrice Decimal? @db.Decimal(10, 2) @map("discount_price")
+  sku           String?
+  stock         Int      @default(0)
+  images        String[] @default([])
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  category    Category?         @relation(fields: [categoryId], references: [id])
+  orderItems  OrderItem[]
+  variations  ProductVariation[]
+
+  @@map("products")
+}
+
+model ProductVariation {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  name      String
+  sku       String?
+  price     Decimal  @db.Decimal(10, 2)
+  stock     Int      @default(0)
+  images    String[] @default([])
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_variations")
+}
+
+// ─── Bookings ────────────────────────────────────────────
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Booking {
+  id          String        @id @default(cuid())
+  userId      String        @map("user_id")
+  serviceId   String        @map("service_id")
+  status      BookingStatus @default(PENDING)
+  scheduledAt DateTime      @map("scheduled_at")
+  notes       String?
+  totalAmount Decimal       @db.Decimal(10, 2) @map("total_amount")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  user        User    @relation(fields: [userId], references: [id])
+  service     Service @relation(fields: [serviceId], references: [id])
+
+  @@map("bookings")
+}
+
+// ─── Slot Config ─────────────────────────────────────────
+
+model SlotConfig {
+  id               String   @id @default(cuid())
+  workStartTime    String   @map("work_start_time")
+  workEndTime      String   @map("work_end_time")
+  employeeTeams    Int      @default(3) @map("employee_teams")
+  slotIntervalMins Int      @default(30) @map("slot_interval_mins")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("slot_config")
+}
+
+model BlockedDate {
+  id     String   @id @default(cuid())
+  date   DateTime @db.Date
+  reason String?
+
+  @@unique([date])
+  @@map("blocked_dates")
+}
+
+// ─── Coupons ─────────────────────────────────────────────
+
+enum CouponType {
+  FLAT
+  PERCENT
+}
+
+model Coupon {
+  id             String     @id @default(cuid())
+  code           String     @unique
+  type           CouponType
+  value          Decimal    @db.Decimal(10, 2)
+  maxDiscount    Decimal?   @db.Decimal(10, 2) @map("max_discount")
+  minOrderAmount Decimal?   @db.Decimal(10, 2) @map("min_order_amount")
+  usageLimit     Int?       @map("usage_limit")
+  usedCount      Int        @default(0) @map("used_count")
+  validFrom      DateTime   @map("valid_from")
+  validTo        DateTime   @map("valid_to")
+  isActive       Boolean    @default(true) @map("is_active")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  usages   CouponUsage[]
+  payments Payment[]
+
+  @@map("coupons")
+}
+
+model CouponUsage {
+  id        String   @id @default(cuid())
+  couponId  String   @map("coupon_id")
+  userPhone String   @map("user_phone")
+  usedAt    DateTime @default(now()) @map("used_at")
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, userPhone])
+  @@map("coupon_usages")
+}
+
+// ─── Orders ──────────────────────────────────────────────
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  userId      String      @map("user_id")
+  status      OrderStatus @default(PENDING)
+  totalAmount Decimal     @db.Decimal(10, 2) @map("total_amount")
+  notes       String?
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  user        User        @relation(fields: [userId], references: [id])
+  items       OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String  @map("order_id")
+  productId String  @map("product_id")
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2) @map("unit_price")
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+// ─── Payments ────────────────────────────────────────────
+
+enum PaymentEntityType {
+  BOOKING
+  ORDER
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  COD_PENDING
+  CANCELLED
+}
+
+enum PaymentMethod {
+  UPI
+  CARD
+  NETBANKING
+  WALLET
+  COD
+  OTHER
+}
+
+enum PaymentProvider {
+  RAZORPAY
+  MANUAL
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+model Payment {
+  id                String            @id @default(cuid())
+  entityType        PaymentEntityType
+  entityId          String            @map("entity_id")
+  userId            String            @map("user_id")
+  provider          PaymentProvider   @default(RAZORPAY)
+  status            PaymentStatus     @default(CREATED)
+  amount            Decimal           @db.Decimal(10, 2)
+  currency          String            @default("INR")
+  method            PaymentMethod?
+  razorpayOrderId   String?           @unique @map("razorpay_order_id")
+  razorpayPaymentId String?           @unique @map("razorpay_payment_id")
+  razorpaySignature String?           @map("razorpay_signature")
+  couponId          String?           @map("coupon_id")
+  couponCode        String?           @map("coupon_code")
+  discountAmount    Decimal?          @db.Decimal(10, 2) @map("discount_amount")
+  grossAmount       Decimal           @db.Decimal(10, 2) @map("gross_amount")
+  notes             String?
+  failureReason     String?           @map("failure_reason")
+  capturedAt        DateTime?         @map("captured_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  user    User     @relation(fields: [userId], references: [id])
+  coupon  Coupon?  @relation(fields: [couponId], references: [id])
+  invoice Invoice?
+  refunds Refund[]
+  logs    PaymentLog[]
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([status])
+  @@map("payments")
+}
+
+model PaymentLog {
+  id         String         @id @default(cuid())
+  paymentId  String         @map("payment_id")
+  fromStatus PaymentStatus? @map("from_status")
+  toStatus   PaymentStatus  @map("to_status")
+  trigger    String
+  metadata   Json?
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@map("payment_logs")
+}
+
+model Invoice {
+  id                String            @id @default(cuid())
+  paymentId         String            @unique @map("payment_id")
+  invoiceNumber     String            @unique @map("invoice_number")
+  entityType        PaymentEntityType
+  entityId          String            @map("entity_id")
+  userId            String            @map("user_id")
+  lineItemsSnapshot Json              @map("line_items_snapshot")
+  subtotal          Decimal           @db.Decimal(10, 2)
+  discountAmount    Decimal           @default(0) @db.Decimal(10, 2) @map("discount_amount")
+  taxAmount         Decimal           @default(0) @db.Decimal(10, 2) @map("tax_amount")
+  totalAmount       Decimal           @db.Decimal(10, 2) @map("total_amount")
+  taxRate           Decimal?          @db.Decimal(5, 2) @map("tax_rate")
+  taxLabel          String?           @default("GST") @map("tax_label")
+  couponCode        String?           @map("coupon_code")
+  notes             String?
+  issuedAt          DateTime          @default(now()) @map("issued_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@map("invoices")
+}
+
+model InvoiceCounter {
+  id      Int @id @default(1)
+  lastSeq Int @default(0) @map("last_seq")
+
+  @@map("invoice_counter")
+}
+
+model Refund {
+  id               String       @id @default(cuid())
+  paymentId        String       @map("payment_id")
+  razorpayRefundId String?      @unique @map("razorpay_refund_id")
+  amount           Decimal      @db.Decimal(10, 2)
+  status           RefundStatus @default(PENDING)
+  reason           String?
+  failureReason    String?      @map("failure_reason")
+  initiatedBy      String?      @map("initiated_by")
+  processedAt      DateTime?    @map("processed_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+model WebhookEvent {
+  id          String             @id @default(cuid())
+  eventId     String             @unique @map("event_id")
+  eventType   String             @map("event_type")
+  payload     Json
+  status      WebhookEventStatus @default(RECEIVED)
+  error       String?
+  processedAt DateTime?          @map("processed_at")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@index([eventId])
+  @@map("webhook_events")
+}
