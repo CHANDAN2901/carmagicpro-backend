@@ -11,7 +11,8 @@ const { NODE_ENV } = require('../../config/env');
 const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: NODE_ENV === 'production',
-  sameSite: 'strict',
+  // 'none' required for cross-origin (Vercel frontend → Render backend); must pair with secure:true
+  sameSite: NODE_ENV === 'production' ? 'none' : 'strict',
 };
 
 const login = async (req, res, next) => {
