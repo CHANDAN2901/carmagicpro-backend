@@ -232,12 +232,12 @@ const verifyPayment = async ({ razorpayOrderId, razorpayPaymentId, razorpaySigna
       },
     });
     if (payment.couponId) {
-      const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { phone: true } });
+      const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { email: true } });
       if (user) {
         await tx.couponUsage.upsert({
-          where: { couponId_userPhone: { couponId: payment.couponId, userPhone: user.phone } },
+          where: { couponId_userEmail: { couponId: payment.couponId, userEmail: user.email } },
           update: {},
-          create: { couponId: payment.couponId, userPhone: user.phone },
+          create: { couponId: payment.couponId, userEmail: user.email },
         });
         await tx.coupon.update({ where: { id: payment.couponId }, data: { usedCount: { increment: 1 } } });
       }
@@ -322,12 +322,12 @@ const codCollect = async (id) => {
       data: { paymentId: id, fromStatus: 'COD_PENDING', toStatus: 'CAPTURED', trigger: 'ADMIN:cod_collected' },
     });
     if (payment.couponId) {
-      const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { phone: true } });
+      const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { email: true } });
       if (user) {
         await tx.couponUsage.upsert({
-          where: { couponId_userPhone: { couponId: payment.couponId, userPhone: user.phone } },
+          where: { couponId_userEmail: { couponId: payment.couponId, userEmail: user.email } },
           update: {},
-          create: { couponId: payment.couponId, userPhone: user.phone },
+          create: { couponId: payment.couponId, userEmail: user.email },
         });
         await tx.coupon.update({ where: { id: payment.couponId }, data: { usedCount: { increment: 1 } } });
       }

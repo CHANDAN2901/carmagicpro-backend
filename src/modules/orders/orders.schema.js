@@ -24,4 +24,16 @@ const listOrdersQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).default(20),
 });
 
-module.exports = { createOrderSchema, updateOrderSchema, listOrdersQuerySchema };
+// Public order schema — unitPrice NOT accepted from client (locked to DB price server-side)
+const createPublicOrderSchema = z.object({
+  userId: z.string().min(1),
+  items: z.array(
+    z.object({
+      productId: z.string().min(1),
+      quantity: z.number().int().positive(),
+    })
+  ).min(1),
+  notes: z.string().max(500).optional(),
+});
+
+module.exports = { createOrderSchema, createPublicOrderSchema, updateOrderSchema, listOrdersQuerySchema };

@@ -36,6 +36,17 @@ model Otp {
   @@map("otps")
 }
 
+model CustomerOtp {
+  id        String   @id @default(cuid())
+  email     String
+  otp       String
+  expiresAt DateTime @map("expires_at")
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("customer_otps")
+}
+
 model Session {
   id         String   @id @default(cuid())
   adminId    String   @map("admin_id")
@@ -52,13 +63,15 @@ model Session {
 // ─── Users (Customers) ───────────────────────────────────
 
 model User {
-  id          String   @id @default(cuid())
-  name        String
-  email       String?  @unique
-  phone       String   @unique
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  phone        String?  @unique
+  isVerified   Boolean  @default(false) @map("is_verified")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   bookings    Booking[]
   orders      Order[]
@@ -266,12 +279,12 @@ model Coupon {
 model CouponUsage {
   id        String   @id @default(cuid())
   couponId  String   @map("coupon_id")
-  userPhone String   @map("user_phone")
+  userEmail String   @map("user_email")
   usedAt    DateTime @default(now()) @map("used_at")
 
   coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
 
-  @@unique([couponId, userPhone])
+  @@unique([couponId, userEmail])
   @@map("coupon_usages")
 }
 

@@ -1,5 +1,5 @@
 const ordersService = require('./orders.service');
-const { createOrderSchema, updateOrderSchema, listOrdersQuerySchema } = require('./orders.schema');
+const { createOrderSchema, createPublicOrderSchema, updateOrderSchema, listOrdersQuerySchema } = require('./orders.schema');
 
 const getAll = async (req, res, next) => {
   try {
@@ -49,4 +49,14 @@ const remove = async (req, res, next) => {
   }
 };
 
-module.exports = { getAll, getById, create, update, remove };
+const createPublic = async (req, res, next) => {
+  try {
+    const body = createPublicOrderSchema.parse(req.body);
+    const order = await ordersService.createPublic(body);
+    res.status(201).json({ success: true, order });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getAll, getById, create, createPublic, update, remove };

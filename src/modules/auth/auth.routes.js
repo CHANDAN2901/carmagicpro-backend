@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const rateLimit = require('express-rate-limit');
 const ctrl = require('./auth.controller');
+const customerCtrl = require('./customer.auth.controller');
 const { authenticate } = require('../../middleware/auth');
 
 const router = Router();
@@ -27,5 +28,11 @@ router.post('/admin/resend-otp', otpLimiter, ctrl.resendOtp);
 router.post('/forgot-password', otpLimiter, ctrl.forgotPassword);
 router.post('/reset-password', otpLimiter, ctrl.resetPassword);
 router.post('/logout', authenticate, ctrl.logout);
+
+// Customer auth
+router.post('/customer/register', loginLimiter, customerCtrl.register);
+router.post('/customer/login', loginLimiter, customerCtrl.login);
+router.post('/customer/verify-otp', otpLimiter, customerCtrl.verifyOtp);
+router.post('/customer/resend-otp', otpLimiter, customerCtrl.resendOtp);
 
 module.exports = router;
