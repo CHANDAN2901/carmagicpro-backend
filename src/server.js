@@ -50,6 +50,29 @@ app.use('/api/webhooks', webhooksRoutes);
 app.use('/api/invoices', invoicesRoutes);
 app.use('/api/upload', uploadRoutes);
 
+app.get('/', (_, res) => {
+  const uptimeSeconds = Math.floor(process.uptime());
+  const h = Math.floor(uptimeSeconds / 3600);
+  const m = Math.floor((uptimeSeconds % 3600) / 60);
+  const s = uptimeSeconds % 60;
+  res.json({
+    success: true,
+    message: '🚀 Welcome to CarMagicPro Customer & Dashboard API',
+    status: '✅ Server is up and running',
+    version: '1.0.0',
+    data: {
+      service: 'CarMagicPro API Server',
+      version: '1.0.0',
+      environment: process.env.NODE_ENV ?? 'development',
+      timestamp: new Date().toISOString(),
+      uptime: `${h}h ${m}m ${s}s`,
+    },
+    meta: {
+      author: 'CarMagicPro Development Team',
+    },
+  });
+});
+
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 
 app.use(errorHandler);
