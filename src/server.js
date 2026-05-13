@@ -21,11 +21,24 @@ const paymentsRoutes = require('./modules/payments/payments.routes');
 const webhooksRoutes = require('./modules/webhooks/webhooks.routes');
 const invoicesRoutes = require('./modules/invoices/invoices.routes');
 const uploadRoutes = require('./modules/upload/upload.routes');
+const customerRoutes = require('./modules/customer/customer.routes');
 
 const app = express();
 
-app.use(cors({ origin: CLIENT_URL, credentials: true }));
-app.options('/{*path}', cors({ origin: CLIENT_URL, credentials: true }));
+const allowedOrigins = CLIENT_URL
+  ? CLIENT_URL.split(',').map((o) => o.trim())
+  : ['http://localhost:5173', 'http://localhost:5174'];
+
+const corsOptions = {
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
 app.use(helmet({ crossOriginResourcePolicy: false }));
 
 // Webhook must receive raw body for HMAC verification — register BEFORE express.json()
@@ -49,6 +62,7 @@ app.use('/api/payments', paymentsRoutes);
 app.use('/api/webhooks', webhooksRoutes);
 app.use('/api/invoices', invoicesRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/customer', customerRoutes);
 
 app.get('/', (_, res) => {
   const uptimeSeconds = Math.floor(process.uptime());
