@@ -78,8 +78,22 @@ model User {
   orders      Order[]
   payments    Payment[]
   invoices    Invoice[]
+  vehicles    Vehicle[]
 
   @@map("users")
+}
+
+model Vehicle {
+  id            String      @id @default(cuid())
+  userId        String      @map("user_id")
+  vehicleTypeId String      @map("vehicle_type_id")
+  plateNumber   String      @map("plate_number")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  user        User        @relation(fields: [userId], references: [id])
+  vehicleType VehicleType @relation(fields: [vehicleTypeId], references: [id])
+
+  @@map("vehicles")
 }
 
 // ─── Categories ──────────────────────────────────────────
@@ -121,6 +135,7 @@ model VehicleType {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   servicePricings ServicePricing[]
+  vehicles        Vehicle[]
 
   @@map("vehicle_types")
 }

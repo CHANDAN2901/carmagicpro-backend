@@ -34,5 +34,6 @@ router.post('/customer/register', loginLimiter, customerCtrl.register);
 router.post('/customer/login', loginLimiter, customerCtrl.login);
 router.post('/customer/verify-otp', otpLimiter, customerCtrl.verifyOtp);
 router.post('/customer/resend-otp', otpLimiter, customerCtrl.resendOtp);
+router.post('/customer/logout', customerCtrl.logout);
 
 module.exports = router;
