@@ -16,9 +16,9 @@ const findUserByIdentifier = async (identifier) => {
   return prisma.user.findFirst({ where: { phone: identifier } });
 };
 
-const dispatchOtp = async (email, name) => {
-  const last = await prisma.customerOtp.findFirst({
-    where: { email },
+const dispatchOtp = async (userId, email, name) => {
+  const last = await prisma.otp.findFirst({
+    where: { userId },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -28,10 +28,10 @@ const dispatchOtp = async (email, name) => {
     throw err;
   }
 
-  await prisma.customerOtp.deleteMany({ where: { email } });
+  await prisma.otp.deleteMany({ where: { userId } });
 
   const otp = generateOtp();
-  await prisma.customerOtp.create({ data: { email, otp, expiresAt: otpExpiresAt() } });
+  await prisma.otp.create({ data: { userId, otp, expiresAt: otpExpiresAt() } });
 
   try {
     await sendCustomerOtpEmail(email, name, otp);
@@ -50,11 +50,11 @@ const register = async ({ name, email, phone, password }) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.user.create({
-    data: { name, email, phone, passwordHash, isVerified: false },
+  const user = await prisma.user.create({
+    data: { name, email, phone, passwordHash, role: 'CUSTOMER', isVerified: false },
   });
 
-  await dispatchOtp(email, name);
+  await dispatchOtp(user.id, user.email, user.name);
   return { message: 'Account created. Please check your email for the verification OTP.' };
 };
 
@@ -62,7 +62,7 @@ const login = async ({ identifier, password }) => {
   const GENERIC = { status: 401, message: 'Invalid credentials' };
 
   const user = await findUserByIdentifier(identifier);
-  if (!user) throw GENERIC;
+  if (!user || user.role !== 'CUSTOMER') throw GENERIC;
 
   if (!user.isActive) {
     const err = new Error('Account is disabled. Please contact support.');
@@ -74,11 +74,11 @@ const login = async ({ identifier, password }) => {
   if (!valid) throw GENERIC;
 
   if (user.twoFactorEnabled) {
-    await dispatchOtp(user.email, user.name);
+    await dispatchOtp(user.id, user.email, user.name);
     return { requiresOtp: true, message: 'OTP sent to your email. Please verify to continue.' };
   }
 
-  const token = signAccessToken({ userId: user.id, email: user.email });
+  const token = signAccessToken({ userId: user.id, email: user.email, role: 'CUSTOMER' });
   return {
     requiresOtp: false,
     token,
@@ -94,9 +94,8 @@ const verifyOtp = async ({ identifier, otp }) => {
     throw err;
   }
 
-  const { email } = user;
-  const record = await prisma.customerOtp.findFirst({
-    where: { email },
+  const record = await prisma.otp.findFirst({
+    where: { userId: user.id },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -113,7 +112,7 @@ const verifyOtp = async ({ identifier, otp }) => {
   }
 
   if (record.otp !== otp) {
-    await prisma.customerOtp.update({
+    await prisma.otp.update({
       where: { id: record.id },
       data: { attempts: { increment: 1 } },
     });
@@ -122,13 +121,13 @@ const verifyOtp = async ({ identifier, otp }) => {
     throw err;
   }
 
-  await prisma.customerOtp.delete({ where: { id: record.id } });
+  await prisma.otp.delete({ where: { id: record.id } });
 
   if (!user.isVerified) {
-    await prisma.user.update({ where: { email }, data: { isVerified: true } });
+    await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
   }
 
-  const token = signAccessToken({ userId: user.id, email: user.email });
+  const token = signAccessToken({ userId: user.id, email: user.email, role: 'CUSTOMER' });
   return {
     token,
     user: { id: user.id, name: user.name, email: user.email, phone: user.phone, isVerified: true, twoFactorEnabled: user.twoFactorEnabled },
@@ -143,8 +142,49 @@ const resendOtp = async ({ identifier }) => {
     throw err;
   }
 
-  await dispatchOtp(user.email, user.name);
+  await dispatchOtp(user.id, user.email, user.name);
   return { message: 'OTP resent to your email.' };
 };
 
-module.exports = { register, login, verifyOtp, resendOtp };
+const forgotPassword = async ({ email }) => {
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || user.role !== 'CUSTOMER') throw { status: 404, message: 'No account found with this email' };
+
+  await prisma.otp.deleteMany({ where: { userId: user.id } });
+  const otp = generateOtp();
+  await prisma.otp.create({ data: { userId: user.id, otp, expiresAt: otpExpiresAt() } });
+
+  try {
+    await sendCustomerOtpEmail(user.email, user.name, otp);
+  } catch {
+    // intentionally silent
+  }
+  console.warn('[DEV] Customer forgot-password OTP for', user.email, ':', otp);
+
+  return { message: 'OTP sent to your email' };
+};
+
+const resetPassword = async ({ email, otp, password }) => {
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || user.role !== 'CUSTOMER') throw { status: 401, message: 'Invalid request' };
+
+  const record = await prisma.otp.findFirst({
+    where: { userId: user.id },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!record || new Date() > record.expiresAt) throw { status: 401, message: 'OTP expired' };
+  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many attempts' };
+  if (record.otp !== otp) {
+    await prisma.otp.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
+    throw { status: 401, message: 'Invalid OTP' };
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+  await prisma.otp.delete({ where: { id: record.id } });
+
+  return { message: 'Password reset successful' };
+};
+
+module.exports = { register, login, verifyOtp, resendOtp, forgotPassword, resetPassword };

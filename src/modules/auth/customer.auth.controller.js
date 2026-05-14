@@ -91,4 +91,24 @@ const logout = (req, res) => {
   res.json({ success: true, message: 'Logged out' });
 };
 
-module.exports = { register, login, verifyOtp, resendOtp, logout };
+const forgotPassword = async (req, res, next) => {
+  try {
+    const data = z.object({ email: z.string().email() }).parse(req.body);
+    const result = await service.forgotPassword(data);
+    res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+};
+
+const resetPassword = async (req, res, next) => {
+  try {
+    const data = z.object({
+      email: z.string().email(),
+      otp: z.string().length(6),
+      password: passwordSchema,
+    }).parse(req.body);
+    const result = await service.resetPassword(data);
+    res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+};
+
+module.exports = { register, login, verifyOtp, resendOtp, logout, forgotPassword, resetPassword };

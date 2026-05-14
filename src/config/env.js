@@ -11,6 +11,8 @@ if (NODE_ENV === 'production' && !process.env.R2_SECRET_ACCESS_KEY) throw new Er
 if (NODE_ENV === 'production' && !process.env.R2_BUCKET_NAME) throw new Error('R2_BUCKET_NAME is not set');
 if (NODE_ENV === 'production' && !process.env.R2_PUBLIC_URL) throw new Error('R2_PUBLIC_URL is not set');
 
+const getEnv = (key) => process.env[key];
+
 module.exports = {
   PORT: process.env.PORT || 5000,
   NODE_ENV,
@@ -23,4 +25,5 @@ module.exports = {
   ZEPTO_FROM_EMAIL: process.env.ZEPTO_FROM_EMAIL,
   ZEPTO_FROM_NAME: process.env.ZEPTO_FROM_NAME,
   CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:5173',
+  getEnv,
 };

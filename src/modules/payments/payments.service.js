@@ -1,15 +1,22 @@
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
 const { PrismaClient } = require('@prisma/client');
-const { getEnv } = require('../../config/env');
 
 const prisma = new PrismaClient();
 
-const getRazorpay = () =>
-  new Razorpay({
-    key_id: getEnv('RAZORPAY_KEY_ID'),
-    key_secret: getEnv('RAZORPAY_KEY_SECRET'),
+const getRazorpayMode = async () => {
+  const setting = await prisma.appSetting.findUnique({ where: { key: 'razorpay_mode' } });
+  return setting?.value ?? 'test';
+};
+
+const getRazorpay = async () => {
+  const mode = await getRazorpayMode();
+  const suffix = mode.toUpperCase();
+  return new Razorpay({
+    key_id: process.env[`RAZORPAY_KEY_ID_${suffix}`],
+    key_secret: process.env[`RAZORPAY_KEY_SECRET_${suffix}`],
   });
+};
 
 // ── Invoice helpers ──────────────────────────────────────
 
@@ -163,7 +170,8 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
   }
 
   // Razorpay path
-  const razorpay = getRazorpay();
+  const mode = await getRazorpayMode();
+  const razorpay = await getRazorpay();
   const rzpOrder = await razorpay.orders.create({
     amount: Math.round(finalAmount * 100), // paise
     currency: 'INR',
@@ -195,15 +203,17 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     razorpayOrderId: rzpOrder.id,
     amount: finalAmount,
     currency: 'INR',
-    key: getEnv('RAZORPAY_KEY_ID'),
+    key: process.env[`RAZORPAY_KEY_ID_${mode.toUpperCase()}`],
   };
 };
 
 // ── Public: verify Razorpay signature ────────────────────
 
 const verifyPayment = async ({ razorpayOrderId, razorpayPaymentId, razorpaySignature }) => {
+  const mode = await getRazorpayMode();
+  const secret = process.env[`RAZORPAY_KEY_SECRET_${mode.toUpperCase()}`];
   const expected = crypto
-    .createHmac('sha256', getEnv('RAZORPAY_KEY_SECRET'))
+    .createHmac('sha256', secret)
     .update(`${razorpayOrderId}|${razorpayPaymentId}`)
     .digest('hex');
 
@@ -350,7 +360,7 @@ const initiateRefund = async (id, { amount, reason }) => {
     const e = new Error('No Razorpay payment ID on record'); e.statusCode = 400; throw e;
   }
 
-  const razorpay = getRazorpay();
+  const razorpay = await getRazorpay();
   const rzpRefund = await razorpay.payments.refund(payment.razorpayPaymentId, {
     amount: Math.round(amount * 100),
     notes: { reason: reason ?? 'Admin initiated refund' },

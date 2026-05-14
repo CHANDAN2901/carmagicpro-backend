@@ -5,7 +5,11 @@ const customerAuthenticate = (req, res, next) => {
   if (!token) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
   try {
-    req.user = verifyAccessToken(token);
+    const decoded = verifyAccessToken(token);
+    if (decoded.role && decoded.role !== 'CUSTOMER') {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+    req.user = decoded;
     next();
   } catch {
     res.status(401).json({ success: false, message: 'Session expired' });

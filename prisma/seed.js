@@ -28,8 +28,8 @@ const vehicleTypes = [
 
 async function main() {
   // ── Admin ──────────────────────────────────────────────────
-  const adminEmail = 'c2905y@gmail.com';
-  const passwordHash = await bcrypt.hash('Admin@1234', 12);
+  const adminEmail = 'info@carmagicpro.com';
+  const passwordHash = await bcrypt.hash('Admin123', 12);
 
   const admin = await prisma.admin.upsert({
     where:  { email: adminEmail },
@@ -37,7 +37,7 @@ async function main() {
     create: { email: adminEmail, passwordHash, isVerified: true },
   });
 
-  console.log('✅ Admin:', admin.email, '/ password: Admin@1234');
+  console.log('✅ Admin:', admin.email, '/ password: Admin123');
 
   // ── Vehicle Types ──────────────────────────────────────────
   const vtMap = {};

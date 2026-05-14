@@ -9,35 +9,34 @@ const MAX_OTP_ATTEMPTS = 3;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 
 const login = async ({ email, password }) => {
-  const admin = await prisma.admin.findUnique({ where: { email } });
-  if (!admin) throw { status: 401, message: GENERIC_ERROR.message };
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || user.role !== 'ADMIN') throw { status: 401, message: GENERIC_ERROR.message };
 
-  const valid = await bcrypt.compare(password, admin.passwordHash);
+  const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) throw { status: 401, message: GENERIC_ERROR.message };
 
-  // Delete any existing OTPs and send a fresh one
-  await prisma.otp.deleteMany({ where: { adminId: admin.id } });
+  await prisma.otp.deleteMany({ where: { userId: user.id } });
 
   const otp = generateOtp();
   const expiresAt = otpExpiresAt();
-  await prisma.otp.create({ data: { adminId: admin.id, otp, expiresAt } });
+  await prisma.otp.create({ data: { userId: user.id, otp, expiresAt } });
 
   try {
-    await sendOtpEmail(admin.email, otp);
+    await sendOtpEmail(user.email, otp);
   } catch {
     // intentionally empty
   }
-  console.warn('[DEV] OTP for', admin.email, ':', otp);
+  console.warn('[DEV] OTP for', user.email, ':', otp);
 
   return { message: 'OTP sent' };
 };
 
 const verifyOtp = async ({ email, otp }) => {
-  const admin = await prisma.admin.findUnique({ where: { email } });
-  if (!admin) throw { status: 401, message: GENERIC_ERROR.message };
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || user.role !== 'ADMIN') throw { status: 401, message: GENERIC_ERROR.message };
 
   const record = await prisma.otp.findFirst({
-    where: { adminId: admin.id },
+    where: { userId: user.id },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -51,7 +50,7 @@ const verifyOtp = async ({ email, otp }) => {
 
   await prisma.otp.delete({ where: { id: record.id } });
 
-  const payload = { adminId: admin.id, email: admin.email };
+  const payload = { userId: user.id, email: user.email, role: 'ADMIN' };
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
 
@@ -59,11 +58,11 @@ const verifyOtp = async ({ email, otp }) => {
 };
 
 const resendOtp = async ({ email }) => {
-  const admin = await prisma.admin.findUnique({ where: { email } });
-  if (!admin) throw { status: 401, message: GENERIC_ERROR.message };
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || user.role !== 'ADMIN') throw { status: 401, message: GENERIC_ERROR.message };
 
   const last = await prisma.otp.findFirst({
-    where: { adminId: admin.id },
+    where: { userId: user.id },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -71,40 +70,39 @@ const resendOtp = async ({ email }) => {
     throw { status: 429, message: 'Please wait before requesting another OTP' };
   }
 
-  await prisma.otp.deleteMany({ where: { adminId: admin.id } });
+  await prisma.otp.deleteMany({ where: { userId: user.id } });
 
   const otp = generateOtp();
-  await prisma.otp.create({ data: { adminId: admin.id, otp, expiresAt: otpExpiresAt() } });
+  await prisma.otp.create({ data: { userId: user.id, otp, expiresAt: otpExpiresAt() } });
 
   try {
-    await sendOtpEmail(admin.email, otp);
+    await sendOtpEmail(user.email, otp);
   } catch {
     // intentionally empty
   }
-  console.warn('[DEV] OTP for', admin.email, ':', otp);
+  console.warn('[DEV] OTP for', user.email, ':', otp);
 
   return { message: 'OTP resent' };
 };
 
 const forgotPassword = async ({ email }) => {
-  const admin = await prisma.admin.findUnique({ where: { email } });
-  // Always return success to avoid email enumeration
-  if (!admin) return { message: 'If the email exists, an OTP has been sent' };
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || user.role !== 'ADMIN') throw { status: 404, message: 'No account found with this email' };
 
-  await prisma.otp.deleteMany({ where: { adminId: admin.id } });
+  await prisma.otp.deleteMany({ where: { userId: user.id } });
   const otp = generateOtp();
-  await prisma.otp.create({ data: { adminId: admin.id, otp, expiresAt: otpExpiresAt() } });
-  await sendOtpEmail(admin.email, otp);
+  await prisma.otp.create({ data: { userId: user.id, otp, expiresAt: otpExpiresAt() } });
+  await sendOtpEmail(user.email, otp);
 
-  return { message: 'If the email exists, an OTP has been sent' };
+  return { message: 'OTP sent to your email' };
 };
 
 const resetPassword = async ({ email, otp, password }) => {
-  const admin = await prisma.admin.findUnique({ where: { email } });
-  if (!admin) throw { status: 401, message: 'Invalid request' };
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || user.role !== 'ADMIN') throw { status: 401, message: 'Invalid request' };
 
   const record = await prisma.otp.findFirst({
-    where: { adminId: admin.id },
+    where: { userId: user.id },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -116,7 +114,7 @@ const resetPassword = async ({ email, otp, password }) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.admin.update({ where: { id: admin.id }, data: { passwordHash } });
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
   await prisma.otp.delete({ where: { id: record.id } });
 
   return { message: 'Password reset successful' };

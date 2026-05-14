@@ -22,6 +22,7 @@ const webhooksRoutes = require('./modules/webhooks/webhooks.routes');
 const invoicesRoutes = require('./modules/invoices/invoices.routes');
 const uploadRoutes = require('./modules/upload/upload.routes');
 const customerRoutes = require('./modules/customer/customer.routes');
+const paymentSettingsRoutes = require('./modules/paymentSettings/paymentSettings.routes');
 
 const app = express();
 
@@ -61,6 +62,7 @@ app.use('/api/coupons', couponsRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/webhooks', webhooksRoutes);
 app.use('/api/invoices', invoicesRoutes);
+app.use('/api/admin/payment-settings', paymentSettingsRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/customer', customerRoutes);
 

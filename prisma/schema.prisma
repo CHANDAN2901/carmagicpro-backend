@@ -10,53 +10,33 @@ datasource db {
 
 // ─── Auth ────────────────────────────────────────────────
 
-model Admin {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String    @map("password_hash")
-  isVerified   Boolean   @default(false) @map("is_verified")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-
-  otps     Otp[]
-  sessions Session[]
-
-  @@map("admins")
+enum Role {
+  ADMIN
+  CUSTOMER
 }
 
 model Otp {
   id        String   @id @default(cuid())
-  adminId   String   @map("admin_id")
+  userId    String   @map("user_id")
   otp       String
   expiresAt DateTime @map("expires_at")
   attempts  Int      @default(0)
   createdAt DateTime @default(now()) @map("created_at")
 
-  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("otps")
 }
 
-model CustomerOtp {
-  id        String   @id @default(cuid())
-  email     String
-  otp       String
-  expiresAt DateTime @map("expires_at")
-  attempts  Int      @default(0)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@map("customer_otps")
-}
-
 model Session {
   id         String   @id @default(cuid())
-  adminId    String   @map("admin_id")
+  userId     String   @map("user_id")
   token      String   @unique
   expiresAt  DateTime @map("expires_at")
   deviceInfo String?  @map("device_info")
   createdAt  DateTime @default(now()) @map("created_at")
 
-  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("sessions")
 }
@@ -64,21 +44,25 @@ model Session {
 // ─── Users (Customers) ───────────────────────────────────
 
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  phone        String?  @unique
-  isVerified   Boolean  @default(false) @map("is_verified")
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                String   @id @default(cuid())
+  name              String
+  email             String   @unique
+  passwordHash      String   @map("password_hash")
+  phone             String?  @unique
+  role              Role     @default(CUSTOMER)
+  isVerified        Boolean  @default(false) @map("is_verified")
+  isActive          Boolean  @default(true) @map("is_active")
+  twoFactorEnabled  Boolean  @default(false) @map("two_factor_enabled")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
-  bookings    Booking[]
-  orders      Order[]
-  payments    Payment[]
-  invoices    Invoice[]
-  vehicles    Vehicle[]
+  otps      Otp[]
+  sessions  Session[]
+  bookings  Booking[]
+  orders    Order[]
+  payments  Payment[]
+  invoices  Invoice[]
+  vehicles  Vehicle[]
 
   @@map("users")
 }
@@ -501,4 +485,12 @@ model WebhookEvent {
 
   @@index([eventId])
   @@map("webhook_events")
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
 }
