@@ -36,7 +36,8 @@ const update = async (id, data) => {
 };
 
 const remove = async (id) => {
-  await getById(id);
+  const user = await getById(id);
+  if (user.role === 'ADMIN') throw Object.assign(new Error('Cannot delete an admin account'), { statusCode: 403 });
   return prisma.user.delete({ where: { id } });
 };
 
