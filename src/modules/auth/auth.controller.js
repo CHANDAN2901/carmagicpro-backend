@@ -1,4 +1,5 @@
 const authService = require('./auth.service');
+const { verifyRefreshToken, signAccessToken } = require('../../utils/jwt');
 const {
   loginSchema,
   verifyOtpSchema,
@@ -30,7 +31,7 @@ const verifyOtp = async (req, res, next) => {
     const body = verifyOtpSchema.parse(req.body);
     const { accessToken, refreshToken } = await authService.verifyOtp(body);
 
-    res.cookie('access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 15 * 60 * 1000 });
+    res.cookie('access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 4 * 60 * 60 * 1000 });
     res.cookie('refresh_token', refreshToken, { ...COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 * 1000 });
 
     res.json({ success: true, message: 'Logged in' });
@@ -69,10 +70,24 @@ const resetPassword = async (req, res, next) => {
   }
 };
 
+const refresh = (req, res) => {
+  const token = req.cookies?.refresh_token;
+  if (!token) return res.status(401).json({ success: false, message: 'No refresh token' });
+
+  try {
+    const decoded = verifyRefreshToken(token);
+    const accessToken = signAccessToken({ id: decoded.id, role: decoded.role, email: decoded.email });
+    res.cookie('access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 4 * 60 * 60 * 1000 });
+    res.json({ success: true, message: 'Token refreshed' });
+  } catch {
+    res.status(401).json({ success: false, message: 'Invalid or expired refresh token' });
+  }
+};
+
 const logout = (req, res) => {
   res.clearCookie('access_token', COOKIE_OPTIONS);
   res.clearCookie('refresh_token', COOKIE_OPTIONS);
   res.json({ success: true, message: 'Logged out' });
 };
 
-module.exports = { login, verifyOtp, resendOtp, forgotPassword, resetPassword, logout };
+module.exports = { login, verifyOtp, resendOtp, forgotPassword, resetPassword, logout, refresh };
