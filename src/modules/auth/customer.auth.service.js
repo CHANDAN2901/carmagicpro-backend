@@ -3,6 +3,7 @@ const prisma = require('../../config/prisma');
 const { generateOtp, otpExpiresAt } = require('../../utils/otp');
 const { signAccessToken } = require('../../utils/jwt');
 const { sendCustomerOtpEmail } = require('../../utils/mailer');
+const { NODE_ENV } = require('../../config/env');
 
 const MAX_OTP_ATTEMPTS = 3;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
@@ -23,8 +24,10 @@ const dispatchOtp = async (userId, email, name) => {
   });
 
   if (last && Date.now() - new Date(last.createdAt).getTime() < OTP_RESEND_COOLDOWN_MS) {
-    const err = new Error('Please wait 60 seconds before requesting another OTP');
+    const retryAfter = Math.ceil((OTP_RESEND_COOLDOWN_MS - (Date.now() - new Date(last.createdAt).getTime())) / 1000);
+    const err = new Error(`Please wait ${retryAfter} seconds before requesting another OTP`);
     err.statusCode = 429;
+    err.retryAfter = retryAfter;
     throw err;
   }
 
@@ -38,7 +41,7 @@ const dispatchOtp = async (userId, email, name) => {
   } catch {
     // intentionally silent
   }
-  console.warn('[DEV] Customer OTP for', email, ':', otp);
+  if (NODE_ENV !== 'production') console.warn('[DEV] Customer OTP for', email, ':', otp);
 };
 
 const register = async ({ name, email, phone, password }) => {
@@ -106,9 +109,7 @@ const verifyOtp = async ({ identifier, otp }) => {
   }
 
   if (record.attempts >= MAX_OTP_ATTEMPTS) {
-    const err = new Error('Too many incorrect attempts. Please request a new OTP.');
-    err.statusCode = 429;
-    throw err;
+    throw { status: 429, message: 'Too many incorrect attempts. Please request a new OTP.' };
   }
 
   if (record.otp !== otp) {
@@ -159,7 +160,7 @@ const forgotPassword = async ({ email }) => {
   } catch {
     // intentionally silent
   }
-  console.warn('[DEV] Customer forgot-password OTP for', user.email, ':', otp);
+  if (NODE_ENV !== 'production') console.warn('[DEV] Customer forgot-password OTP for', user.email, ':', otp);
 
   return { message: 'OTP sent to your email' };
 };
@@ -174,7 +175,7 @@ const resetPassword = async ({ email, otp, password }) => {
   });
 
   if (!record || new Date() > record.expiresAt) throw { status: 401, message: 'OTP expired' };
-  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many attempts' };
+  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many incorrect attempts. Please request a new OTP.' };
   if (record.otp !== otp) {
     await prisma.otp.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
     throw { status: 401, message: 'Invalid OTP' };

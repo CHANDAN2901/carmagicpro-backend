@@ -3,6 +3,7 @@ const prisma = require('../../config/prisma');
 const { generateOtp, otpExpiresAt } = require('../../utils/otp');
 const { sendOtpEmail } = require('../../utils/mailer');
 const { signAccessToken, signRefreshToken } = require('../../utils/jwt');
+const { NODE_ENV } = require('../../config/env');
 
 const GENERIC_ERROR = { status: 401, message: 'Invalid credentials' };
 const MAX_OTP_ATTEMPTS = 3;
@@ -26,7 +27,7 @@ const login = async ({ email, password }) => {
   } catch {
     // intentionally empty
   }
-  console.warn('[DEV] OTP for', user.email, ':', otp);
+  if (NODE_ENV !== 'production') console.warn('[DEV] OTP for', user.email, ':', otp);
 
   return { message: 'OTP sent' };
 };
@@ -41,7 +42,7 @@ const verifyOtp = async ({ email, otp }) => {
   });
 
   if (!record || new Date() > record.expiresAt) throw { status: 401, message: GENERIC_ERROR.message };
-  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many attempts' };
+  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many incorrect attempts. Please request a new OTP.' };
 
   if (record.otp !== otp) {
     await prisma.otp.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
@@ -67,7 +68,8 @@ const resendOtp = async ({ email }) => {
   });
 
   if (last && Date.now() - new Date(last.createdAt).getTime() < OTP_RESEND_COOLDOWN_MS) {
-    throw { status: 429, message: 'Please wait before requesting another OTP' };
+    const retryAfter = Math.ceil((OTP_RESEND_COOLDOWN_MS - (Date.now() - new Date(last.createdAt).getTime())) / 1000);
+    throw { status: 429, message: `Please wait ${retryAfter} seconds before requesting another OTP`, retryAfter };
   }
 
   await prisma.otp.deleteMany({ where: { userId: user.id } });
@@ -80,21 +82,29 @@ const resendOtp = async ({ email }) => {
   } catch {
     // intentionally empty
   }
-  console.warn('[DEV] OTP for', user.email, ':', otp);
+  if (NODE_ENV !== 'production') console.warn('[DEV] OTP for', user.email, ':', otp);
 
   return { message: 'OTP resent' };
 };
 
 const forgotPassword = async ({ email }) => {
+  const GENERIC_RESPONSE = { message: 'If an account exists for this email, an OTP has been sent.' };
+
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || user.role !== 'ADMIN') throw { status: 404, message: 'No account found with this email' };
+  if (!user || user.role !== 'ADMIN') return GENERIC_RESPONSE;
 
   await prisma.otp.deleteMany({ where: { userId: user.id } });
   const otp = generateOtp();
   await prisma.otp.create({ data: { userId: user.id, otp, expiresAt: otpExpiresAt() } });
-  await sendOtpEmail(user.email, otp);
 
-  return { message: 'OTP sent to your email' };
+  try {
+    await sendOtpEmail(user.email, otp);
+  } catch {
+    // intentionally empty
+  }
+  if (NODE_ENV !== 'production') console.warn('[DEV] Admin forgot-password OTP for', user.email, ':', otp);
+
+  return GENERIC_RESPONSE;
 };
 
 const resetPassword = async ({ email, otp, password }) => {
@@ -107,7 +117,7 @@ const resetPassword = async ({ email, otp, password }) => {
   });
 
   if (!record || new Date() > record.expiresAt) throw { status: 401, message: 'OTP expired' };
-  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many attempts' };
+  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many incorrect attempts. Please request a new OTP.' };
   if (record.otp !== otp) {
     await prisma.otp.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
     throw { status: 401, message: 'Invalid OTP' };

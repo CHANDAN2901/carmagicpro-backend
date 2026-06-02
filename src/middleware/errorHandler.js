@@ -17,6 +17,10 @@ const errorHandler = (err, req, res, next) => {
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 
+  if (err.retryAfter) {
+    res.set('Retry-After', String(err.retryAfter));
+  }
+
   res.status(status).json({ success: false, message: err.message || 'Internal server error' });
 };
 
