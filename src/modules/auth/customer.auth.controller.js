@@ -12,14 +12,6 @@ const setAuthCookie = (res, token) => {
   res.cookie('access_token', token, { ...COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 * 1000 });
 };
 
-const passwordSchema = z
-  .string()
-  .min(8, 'Min 8 characters')
-  .regex(/[A-Z]/, 'Must contain an uppercase letter')
-  .regex(/[a-z]/, 'Must contain a lowercase letter')
-  .regex(/[0-9]/, 'Must contain a number')
-  .regex(/[^A-Za-z0-9]/, 'Must contain a special character');
-
 const identifierSchema = z.string().min(1).refine(
   (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) || /^[6-9]\d{9}$/.test(val),
   { message: 'Must be a valid email or 10-digit phone number' }
@@ -29,12 +21,10 @@ const registerSchema = z.object({
   name: z.string().min(1).max(100),
   email: z.string().email(),
   phone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid phone number').optional(),
-  password: passwordSchema,
 });
 
 const loginSchema = z.object({
   identifier: identifierSchema,
-  password: z.string().min(1),
 });
 
 const verifyOtpSchema = z.object({
@@ -58,11 +48,7 @@ const login = async (req, res, next) => {
   try {
     const data = loginSchema.parse(req.body);
     const result = await service.login(data);
-    if (!result.requiresOtp && result.token) {
-      setAuthCookie(res, result.token);
-    }
-    const { token: _t, ...safeResult } = result;
-    res.json({ success: true, ...safeResult });
+    res.json({ success: true, ...result });
   } catch (err) { next(err); }
 };
 
@@ -91,24 +77,4 @@ const logout = (req, res) => {
   res.json({ success: true, message: 'Logged out' });
 };
 
-const forgotPassword = async (req, res, next) => {
-  try {
-    const data = z.object({ email: z.string().email() }).parse(req.body);
-    const result = await service.forgotPassword(data);
-    res.json({ success: true, ...result });
-  } catch (err) { next(err); }
-};
-
-const resetPassword = async (req, res, next) => {
-  try {
-    const data = z.object({
-      email: z.string().email(),
-      otp: z.string().length(6),
-      password: passwordSchema,
-    }).parse(req.body);
-    const result = await service.resetPassword(data);
-    res.json({ success: true, ...result });
-  } catch (err) { next(err); }
-};
-
-module.exports = { register, login, verifyOtp, resendOtp, logout, forgotPassword, resetPassword };
+module.exports = { register, login, verifyOtp, resendOtp, logout };

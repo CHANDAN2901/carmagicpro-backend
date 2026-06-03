@@ -63,9 +63,19 @@ const update = async (id, data) => {
 
 const remove = async (id) => {
   const service = await getById(id);
+  await prisma.booking.deleteMany({ where: { serviceId: id } });
   await prisma.service.delete({ where: { id } });
   const results = await Promise.allSettled(service.images.map(deleteFromR2));
   results.forEach((r, i) => { if (r.status === 'rejected') console.error('[R2] Failed to delete service image', service.images[i], r.reason); });
 };
 
-module.exports = { getAll, getById, create, update, remove };
+const bulkRemove = async (ids) => {
+  let deleted = 0
+  const failed = []
+  for (const id of ids) {
+    try { await remove(id); deleted++ } catch (e) { failed.push({ id, message: e.message }) }
+  }
+  return { deleted, failed }
+}
+
+module.exports = { getAll, getById, create, update, remove, bulkRemove };

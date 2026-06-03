@@ -30,6 +30,7 @@ const update = async (id, data) => {
 
 const remove = async (id) => {
   await getById(id);
+  await prisma.payment.updateMany({ where: { couponId: id }, data: { couponId: null } });
   return prisma.coupon.delete({ where: { id } });
 };
 
@@ -54,7 +55,7 @@ const apply = async ({ code, amount, userPhone }) => {
   }
 
   const usage = await prisma.couponUsage.findUnique({
-    where: { couponId_userPhone: { couponId: coupon.id, userPhone } },
+    where: { couponId_userEmail: { couponId: coupon.id, userEmail: userPhone } },
   });
   if (usage) {
     throw Object.assign(new Error('You have already used this coupon'), { statusCode: 400 });
@@ -79,11 +80,20 @@ const apply = async ({ code, amount, userPhone }) => {
 };
 
 // Call this when booking is confirmed to record usage
-const recordUsage = async (couponId, userPhone) => {
+const recordUsage = async (couponId, userEmail) => {
   await prisma.$transaction([
-    prisma.couponUsage.create({ data: { couponId, userPhone } }),
+    prisma.couponUsage.create({ data: { couponId, userEmail } }),
     prisma.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } }),
   ]);
 };
 
-module.exports = { getAll, getById, create, update, remove, apply, recordUsage };
+const bulkRemove = async (ids) => {
+  let deleted = 0
+  const failed = []
+  for (const id of ids) {
+    try { await remove(id); deleted++ } catch (e) { failed.push({ id, message: e.message }) }
+  }
+  return { deleted, failed }
+}
+
+module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, recordUsage };

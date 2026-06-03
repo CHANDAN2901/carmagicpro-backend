@@ -25,6 +25,7 @@ model Otp {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
   @@map("otps")
 }
 
@@ -38,6 +39,8 @@ model Session {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+  @@index([expiresAt])
   @@map("sessions")
 }
 
@@ -47,7 +50,7 @@ model User {
   id                String   @id @default(cuid())
   name              String
   email             String   @unique
-  passwordHash      String   @map("password_hash")
+  passwordHash      String?  @map("password_hash")
   phone             String?  @unique
   role              Role     @default(CUSTOMER)
   isVerified        Boolean  @default(false) @map("is_verified")
@@ -64,6 +67,8 @@ model User {
   invoices  Invoice[]
   vehicles  Vehicle[]
 
+  @@index([role])
+  @@index([createdAt])
   @@map("users")
 }
 
@@ -77,6 +82,8 @@ model Vehicle {
   user        User        @relation(fields: [userId], references: [id])
   vehicleType VehicleType @relation(fields: [vehicleTypeId], references: [id])
 
+  @@index([userId])
+  @@index([vehicleTypeId])
   @@map("vehicles")
 }
 
@@ -105,6 +112,8 @@ model Category {
   services    Service[]
   products    Product[]
 
+  @@index([parentId])
+  @@index([type])
   @@map("categories")
 }
 
@@ -143,6 +152,8 @@ model Service {
   bookings  Booking[]
   pricings  ServicePricing[]
 
+  @@index([categoryId])
+  @@index([isActive])
   @@map("services")
 }
 
@@ -181,6 +192,8 @@ model Product {
   orderItems  OrderItem[]
   variations  ProductVariation[]
 
+  @@index([categoryId])
+  @@index([isActive])
   @@map("products")
 }
 
@@ -223,6 +236,10 @@ model Booking {
   user        User    @relation(fields: [userId], references: [id])
   service     Service @relation(fields: [serviceId], references: [id])
 
+  @@index([userId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([scheduledAt])
   @@map("bookings")
 }
 
@@ -310,6 +327,8 @@ model Order {
   user        User        @relation(fields: [userId], references: [id])
   items       OrderItem[]
 
+  @@index([userId])
+  @@index([status])
   @@map("orders")
 }
 
@@ -323,6 +342,8 @@ model OrderItem {
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
 
+  @@index([orderId])
+  @@index([productId])
   @@map("order_items")
 }
 
@@ -402,6 +423,7 @@ model Payment {
   @@index([entityType, entityId])
   @@index([userId])
   @@index([status])
+  @@index([couponId])
   @@map("payments")
 }
 

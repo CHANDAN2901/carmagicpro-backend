@@ -19,7 +19,5 @@ router.post('/customer/login', customerCtrl.login);
 router.post('/customer/verify-otp', customerCtrl.verifyOtp);
 router.post('/customer/resend-otp', customerCtrl.resendOtp);
 router.post('/customer/logout', customerCtrl.logout);
-router.post('/customer/forgot-password', customerCtrl.forgotPassword);
-router.post('/customer/reset-password', customerCtrl.resetPassword);
 
 module.exports = router;

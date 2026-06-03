@@ -69,6 +69,7 @@ const update = async (id, { variations, ...data }) => {
 
 const remove = async (id) => {
   const product = await getById(id);
+  await prisma.orderItem.deleteMany({ where: { productId: id } });
   await prisma.product.delete({ where: { id } });
   const allImages = [
     ...product.images,
@@ -78,4 +79,13 @@ const remove = async (id) => {
   results.forEach((r, i) => { if (r.status === 'rejected') console.error('[R2] Failed to delete product image', allImages[i], r.reason); });
 };
 
-module.exports = { getAll, getById, create, update, remove };
+const bulkRemove = async (ids) => {
+  let deleted = 0
+  const failed = []
+  for (const id of ids) {
+    try { await remove(id); deleted++ } catch (e) { failed.push({ id, message: e.message }) }
+  }
+  return { deleted, failed }
+}
+
+module.exports = { getAll, getById, create, update, remove, bulkRemove };

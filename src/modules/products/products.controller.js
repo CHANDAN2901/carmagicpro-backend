@@ -49,4 +49,15 @@ const remove = async (req, res, next) => {
   }
 };
 
-module.exports = { getAll, getById, create, update, remove };
+const bulkRemove = async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : []
+    if (!ids.length) return res.status(400).json({ success: false, message: 'No IDs provided' })
+    const result = await productsService.bulkRemove(ids)
+    res.json({ success: true, ...result })
+  } catch (err) {
+    next(err)
+  }
+}
+
+module.exports = { getAll, getById, create, update, remove, bulkRemove };

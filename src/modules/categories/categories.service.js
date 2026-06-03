@@ -87,4 +87,13 @@ const remove = async (id) => {
   if (category.imageUrl) await deleteFromR2(category.imageUrl);
 };
 
-module.exports = { getAll, getAllFlat, getById, create, update, remove };
+const bulkRemove = async (ids) => {
+  let deleted = 0
+  const failed = []
+  for (const id of ids) {
+    try { await remove(id); deleted++ } catch (e) { failed.push({ id, message: e.message }) }
+  }
+  return { deleted, failed }
+}
+
+module.exports = { getAll, getAllFlat, getById, create, update, remove, bulkRemove };

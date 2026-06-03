@@ -30,6 +30,10 @@ const update = async (id, data) => {
 
 const remove = async (id) => {
   await getById(id);
+  await prisma.servicePricing.deleteMany({ where: { vehicleTypeId: id } });
+  try { await prisma.vehicle.deleteMany({ where: { vehicleTypeId: id } }) } catch (e) {
+    if (e?.code !== 'P2021') throw e;
+  }
   return prisma.vehicleType.delete({ where: { id } });
 };
 

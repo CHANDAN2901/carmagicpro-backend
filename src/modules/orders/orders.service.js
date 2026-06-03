@@ -28,7 +28,7 @@ const getById = async (id) => {
     where: { id },
     include: {
       user: { select: { id: true, name: true, phone: true } },
-      items: { include: { product: { select: { id: true, name: true, imageUrl: true } } } },
+      items: { include: { product: { select: { id: true, name: true, images: true } } } },
     },
   });
   if (!order) throw Object.assign(new Error('Order not found'), { statusCode: 404 });

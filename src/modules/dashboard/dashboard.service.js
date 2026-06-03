@@ -13,8 +13,8 @@ const getStats = async () => {
     revenueResult, revenueLastMonthResult,
     recentOrders, recentBookings,
   ] = await Promise.all([
-    prisma.user.count(),
-    prisma.user.count({ where: { createdAt: { lt: startOfMonth } } }),
+    prisma.user.count({ where: { role: 'CUSTOMER' } }),
+    prisma.user.count({ where: { role: 'CUSTOMER', createdAt: { lt: startOfMonth } } }),
     prisma.order.count(),
     prisma.order.count({ where: { createdAt: { lt: startOfMonth } } }),
     prisma.booking.count(),

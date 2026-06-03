@@ -1,4 +1,3 @@
-const bcrypt = require('bcryptjs');
 const prisma = require('../../config/prisma');
 const { generateOtp, otpExpiresAt } = require('../../utils/otp');
 const { signAccessToken } = require('../../utils/jwt');
@@ -44,28 +43,39 @@ const dispatchOtp = async (userId, email, name) => {
   if (NODE_ENV !== 'production') console.warn('[DEV] Customer OTP for', email, ':', otp);
 };
 
-const register = async ({ name, email, phone, password }) => {
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
+const register = async ({ name, email, phone }) => {
+  const existingEmail = await prisma.user.findUnique({ where: { email } });
+  if (existingEmail) {
     const err = new Error('An account with this email already exists');
     err.statusCode = 409;
     throw err;
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  if (phone) {
+    const existingPhone = await prisma.user.findFirst({ where: { phone } });
+    if (existingPhone) {
+      const err = new Error('An account with this phone number already exists');
+      err.statusCode = 409;
+      throw err;
+    }
+  }
+
   const user = await prisma.user.create({
-    data: { name, email, phone, passwordHash, role: 'CUSTOMER', isVerified: false },
+    data: { name, email, phone, role: 'CUSTOMER', isVerified: false },
   });
 
   await dispatchOtp(user.id, user.email, user.name);
   return { message: 'Account created. Please check your email for the verification OTP.' };
 };
 
-const login = async ({ identifier, password }) => {
-  const GENERIC = { status: 401, message: 'Invalid credentials' };
-
+const login = async ({ identifier }) => {
   const user = await findUserByIdentifier(identifier);
-  if (!user || user.role !== 'CUSTOMER') throw GENERIC;
+
+  if (!user || user.role !== 'CUSTOMER') {
+    const err = new Error('No account found. Please register first.');
+    err.statusCode = 404;
+    throw err;
+  }
 
   if (!user.isActive) {
     const err = new Error('Account is disabled. Please contact support.');
@@ -73,20 +83,8 @@ const login = async ({ identifier, password }) => {
     throw err;
   }
 
-  const valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid) throw GENERIC;
-
-  if (user.twoFactorEnabled) {
-    await dispatchOtp(user.id, user.email, user.name);
-    return { requiresOtp: true, message: 'OTP sent to your email. Please verify to continue.' };
-  }
-
-  const token = signAccessToken({ userId: user.id, email: user.email, role: 'CUSTOMER' });
-  return {
-    requiresOtp: false,
-    token,
-    user: { id: user.id, name: user.name, email: user.email, phone: user.phone, isVerified: user.isVerified, twoFactorEnabled: user.twoFactorEnabled },
-  };
+  await dispatchOtp(user.id, user.email, user.name);
+  return { requiresOtp: true, message: 'OTP sent to your email. Please verify to continue.' };
 };
 
 const verifyOtp = async ({ identifier, otp }) => {
@@ -131,7 +129,7 @@ const verifyOtp = async ({ identifier, otp }) => {
   const token = signAccessToken({ userId: user.id, email: user.email, role: 'CUSTOMER' });
   return {
     token,
-    user: { id: user.id, name: user.name, email: user.email, phone: user.phone, isVerified: true, twoFactorEnabled: user.twoFactorEnabled },
+    user: { id: user.id, name: user.name, email: user.email, phone: user.phone, isVerified: true },
   };
 };
 
@@ -147,45 +145,4 @@ const resendOtp = async ({ identifier }) => {
   return { message: 'OTP resent to your email.' };
 };
 
-const forgotPassword = async ({ email }) => {
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || user.role !== 'CUSTOMER') throw { status: 404, message: 'No account found with this email' };
-
-  await prisma.otp.deleteMany({ where: { userId: user.id } });
-  const otp = generateOtp();
-  await prisma.otp.create({ data: { userId: user.id, otp, expiresAt: otpExpiresAt() } });
-
-  try {
-    await sendCustomerOtpEmail(user.email, user.name, otp);
-  } catch {
-    // intentionally silent
-  }
-  if (NODE_ENV !== 'production') console.warn('[DEV] Customer forgot-password OTP for', user.email, ':', otp);
-
-  return { message: 'OTP sent to your email' };
-};
-
-const resetPassword = async ({ email, otp, password }) => {
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || user.role !== 'CUSTOMER') throw { status: 401, message: 'Invalid request' };
-
-  const record = await prisma.otp.findFirst({
-    where: { userId: user.id },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  if (!record || new Date() > record.expiresAt) throw { status: 401, message: 'OTP expired' };
-  if (record.attempts >= MAX_OTP_ATTEMPTS) throw { status: 429, message: 'Too many incorrect attempts. Please request a new OTP.' };
-  if (record.otp !== otp) {
-    await prisma.otp.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
-    throw { status: 401, message: 'Invalid OTP' };
-  }
-
-  const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
-  await prisma.otp.delete({ where: { id: record.id } });
-
-  return { message: 'Password reset successful' };
-};
-
-module.exports = { register, login, verifyOtp, resendOtp, forgotPassword, resetPassword };
+module.exports = { register, login, verifyOtp, resendOtp };
