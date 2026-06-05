@@ -42,7 +42,14 @@ const apply = async ({ code, amount, userPhone }) => {
   }
 
   const now = new Date();
-  if (now < coupon.validFrom || now > coupon.validTo) {
+  const validFrom = new Date(coupon.validFrom);
+  validFrom.setHours(0, 0, 0, 0);
+  const validTo = new Date(coupon.validTo);
+  validTo.setHours(23, 59, 59, 999);
+  if (now < validFrom) {
+    throw Object.assign(new Error('Coupon is not yet active'), { statusCode: 400 });
+  }
+  if (now > validTo) {
     throw Object.assign(new Error('Coupon has expired'), { statusCode: 400 });
   }
 

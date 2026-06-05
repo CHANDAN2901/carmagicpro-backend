@@ -8,6 +8,7 @@ const createCategorySchema = z.object({
   parentId: z.string().optional(),
   description: z.string().optional(),
   imageUrl: z.string().url().optional(),
+  isActive: z.boolean().optional(),
 });
 
 const updateCategorySchema = z.object({

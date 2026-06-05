@@ -84,8 +84,8 @@ const getMyVehicles = async (req, res, next) => {
 };
 
 const addVehicleSchema = z.object({
-  vehicleTypeId: z.string().cuid().optional(),
-  carModelId: z.string().cuid().optional(),
+  vehicleTypeId: z.string().uuid().optional(),
+  carModelId: z.string().uuid().optional(),
   fuelType: z.enum(['PETROL', 'DIESEL', 'CNG', 'ELECTRIC', 'HYBRID']).optional(),
   plateNumber: z.string().min(4).max(20).regex(/^[A-Z0-9 -]+$/i),
 });
@@ -147,8 +147,8 @@ const deleteVehicle = async (req, res, next) => {
 
 const createBookingSchema = z.object({
   serviceId: z.string().min(1),
-  vehicleTypeId: z.string().cuid().optional(),
-  carModelId: z.string().cuid().optional(),
+  vehicleTypeId: z.string().uuid().optional(),
+  carModelId: z.string().uuid().optional(),
   fuelType: z.enum(['PETROL', 'DIESEL', 'CNG', 'ELECTRIC', 'HYBRID']).optional(),
   plateNumber: z.string().optional(),
   slotDate: z.string().min(1, 'Date is required'),
@@ -200,10 +200,11 @@ const createBooking = async (req, res, next) => {
         where: { code: data.couponCode, isActive: true },
       });
       if (coupon) {
-        if (coupon.discountType === 'PERCENTAGE') {
-          totalAmount = totalAmount - (totalAmount * Number(coupon.discountValue)) / 100;
+        if (coupon.type === 'PERCENT') {
+          totalAmount = totalAmount - (totalAmount * Number(coupon.value)) / 100;
+          if (coupon.maxDiscount !== null) totalAmount = Math.max(totalAmount, Number(totalAmount) - Number(coupon.maxDiscount));
         } else {
-          totalAmount = totalAmount - Number(coupon.discountValue);
+          totalAmount = totalAmount - Number(coupon.value);
         }
         totalAmount = Math.max(0, totalAmount);
       }
@@ -281,10 +282,10 @@ const createOrder = async (req, res, next) => {
     if (data.couponCode) {
       const coupon = await prisma.coupon.findFirst({ where: { code: data.couponCode, isActive: true } });
       if (coupon) {
-        if (coupon.discountType === 'PERCENTAGE') {
-          totalAmount = totalAmount - (totalAmount * Number(coupon.discountValue)) / 100;
+        if (coupon.type === 'PERCENT') {
+          totalAmount = totalAmount - (totalAmount * Number(coupon.value)) / 100;
         } else {
-          totalAmount = totalAmount - Number(coupon.discountValue);
+          totalAmount = totalAmount - Number(coupon.value);
         }
         totalAmount = Math.max(0, totalAmount);
       }
