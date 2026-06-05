@@ -76,7 +76,7 @@ const refresh = (req, res) => {
 
   try {
     const decoded = verifyRefreshToken(token);
-    const accessToken = signAccessToken({ id: decoded.id, role: decoded.role, email: decoded.email });
+    const accessToken = signAccessToken({ userId: decoded.userId, role: decoded.role, email: decoded.email });
     res.cookie('access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 4 * 60 * 60 * 1000 });
     res.json({ success: true, message: 'Token refreshed' });
   } catch {

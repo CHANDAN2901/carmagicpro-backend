@@ -8,7 +8,9 @@
     "start": "node src/server.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "seed": "node prisma/seed.js",
+    "seed:cars": "node prisma/seed-cars.js"
   },
   "keywords": [],
   "author": "",

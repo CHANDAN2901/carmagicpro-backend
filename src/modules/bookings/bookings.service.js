@@ -1,5 +1,10 @@
 const prisma = require('../../config/prisma');
 
+const vehicleInclude = {
+  vehicleType: { select: { id: true, name: true } },
+  carModel: { select: { id: true, name: true, brand: { select: { name: true } } } },
+};
+
 const getAll = async ({ userId, status, page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
   const where = {};
@@ -14,6 +19,7 @@ const getAll = async ({ userId, status, page = 1, limit = 20 } = {}) => {
       include: {
         user: { select: { id: true, name: true, phone: true } },
         service: { select: { id: true, name: true } },
+        ...vehicleInclude,
       },
       orderBy: { scheduledAt: 'desc' },
     }),
@@ -29,6 +35,7 @@ const getById = async (id) => {
     include: {
       user: { select: { id: true, name: true, phone: true } },
       service: { select: { id: true, name: true, price: true, durationMins: true } },
+      ...vehicleInclude,
     },
   });
   if (!booking) throw Object.assign(new Error('Booking not found'), { statusCode: 404 });

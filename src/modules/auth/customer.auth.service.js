@@ -1,29 +1,22 @@
 const prisma = require('../../config/prisma');
 const { generateOtp, otpExpiresAt } = require('../../utils/otp');
 const { signAccessToken } = require('../../utils/jwt');
-const { sendCustomerOtpEmail } = require('../../utils/mailer');
+const { sendOtpSms } = require('../../utils/sms');
 const { NODE_ENV } = require('../../config/env');
 
 const MAX_OTP_ATTEMPTS = 3;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 
-const isEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
-
-const findUserByIdentifier = async (identifier) => {
-  if (isEmail(identifier)) {
-    return prisma.user.findUnique({ where: { email: identifier } });
-  }
-  return prisma.user.findFirst({ where: { phone: identifier } });
-};
-
-const dispatchOtp = async (userId, email, name) => {
+const dispatchOtp = async (userId, phone) => {
   const last = await prisma.otp.findFirst({
     where: { userId },
     orderBy: { createdAt: 'desc' },
   });
 
   if (last && Date.now() - new Date(last.createdAt).getTime() < OTP_RESEND_COOLDOWN_MS) {
-    const retryAfter = Math.ceil((OTP_RESEND_COOLDOWN_MS - (Date.now() - new Date(last.createdAt).getTime())) / 1000);
+    const retryAfter = Math.ceil(
+      (OTP_RESEND_COOLDOWN_MS - (Date.now() - new Date(last.createdAt).getTime())) / 1000,
+    );
     const err = new Error(`Please wait ${retryAfter} seconds before requesting another OTP`);
     err.statusCode = 429;
     err.retryAfter = retryAfter;
@@ -36,59 +29,35 @@ const dispatchOtp = async (userId, email, name) => {
   await prisma.otp.create({ data: { userId, otp, expiresAt: otpExpiresAt() } });
 
   try {
-    await sendCustomerOtpEmail(email, name, otp);
-  } catch {
-    // intentionally silent
+    await sendOtpSms(phone, otp);
+  } catch (err) {
+    console.error('[OTP delivery failed]', err.message);
   }
-  if (NODE_ENV !== 'production') console.warn('[DEV] Customer OTP for', email, ':', otp);
+
+  if (NODE_ENV !== 'production') console.warn('[DEV] Customer OTP for', phone, ':', otp);
 };
 
-const register = async ({ name, email, phone }) => {
-  const existingEmail = await prisma.user.findUnique({ where: { email } });
-  if (existingEmail) {
-    const err = new Error('An account with this email already exists');
-    err.statusCode = 409;
-    throw err;
-  }
+const requestOtp = async ({ phone }) => {
+  let user = await prisma.user.findFirst({ where: { phone } });
 
-  if (phone) {
-    const existingPhone = await prisma.user.findFirst({ where: { phone } });
-    if (existingPhone) {
-      const err = new Error('An account with this phone number already exists');
-      err.statusCode = 409;
-      throw err;
-    }
-  }
-
-  const user = await prisma.user.create({
-    data: { name, email, phone, role: 'CUSTOMER', isVerified: false },
-  });
-
-  await dispatchOtp(user.id, user.email, user.name);
-  return { message: 'Account created. Please check your email for the verification OTP.' };
-};
-
-const login = async ({ identifier }) => {
-  const user = await findUserByIdentifier(identifier);
-
-  if (!user || user.role !== 'CUSTOMER') {
-    const err = new Error('No account found. Please register first.');
-    err.statusCode = 404;
-    throw err;
-  }
-
-  if (!user.isActive) {
+  if (user && !user.isActive) {
     const err = new Error('Account is disabled. Please contact support.');
     err.statusCode = 403;
     throw err;
   }
 
-  await dispatchOtp(user.id, user.email, user.name);
-  return { requiresOtp: true, message: 'OTP sent to your email. Please verify to continue.' };
+  if (!user) {
+    user = await prisma.user.create({
+      data: { phone, role: 'CUSTOMER', isVerified: false },
+    });
+  }
+
+  await dispatchOtp(user.id, phone);
+  return { message: 'OTP sent to your phone.' };
 };
 
-const verifyOtp = async ({ identifier, otp }) => {
-  const user = await findUserByIdentifier(identifier);
+const verifyOtp = async ({ phone, otp }) => {
+  const user = await prisma.user.findFirst({ where: { phone } });
   if (!user) {
     const err = new Error('Account not found');
     err.statusCode = 404;
@@ -107,7 +76,9 @@ const verifyOtp = async ({ identifier, otp }) => {
   }
 
   if (record.attempts >= MAX_OTP_ATTEMPTS) {
-    throw { status: 429, message: 'Too many incorrect attempts. Please request a new OTP.' };
+    const err = new Error('Too many incorrect attempts. Please request a new OTP.');
+    err.statusCode = 429;
+    throw err;
   }
 
   if (record.otp !== otp) {
@@ -121,28 +92,78 @@ const verifyOtp = async ({ identifier, otp }) => {
   }
 
   await prisma.otp.delete({ where: { id: record.id } });
+  await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
 
-  if (!user.isVerified) {
-    await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
+  // New user — has no name yet, must complete profile
+  if (!user.name) {
+    return { isNewUser: true };
   }
 
-  const token = signAccessToken({ userId: user.id, email: user.email, role: 'CUSTOMER' });
+  const token = signAccessToken({ userId: user.id, role: 'CUSTOMER' });
   return {
     token,
     user: { id: user.id, name: user.name, email: user.email, phone: user.phone, isVerified: true },
   };
 };
 
-const resendOtp = async ({ identifier }) => {
-  const user = await findUserByIdentifier(identifier);
+const completeRegistration = async ({ phone, name, email, address }) => {
+  const user = await prisma.user.findFirst({ where: { phone } });
+
   if (!user) {
     const err = new Error('Account not found');
     err.statusCode = 404;
     throw err;
   }
 
-  await dispatchOtp(user.id, user.email, user.name);
-  return { message: 'OTP resent to your email.' };
+  if (!user.isVerified) {
+    const err = new Error('Phone number not verified. Please request a new OTP.');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  if (user.name) {
+    const err = new Error('Account already registered.');
+    err.statusCode = 409;
+    throw err;
+  }
+
+  if (email) {
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing && existing.id !== user.id) {
+      const err = new Error('An account with this email already exists');
+      err.statusCode = 409;
+      throw err;
+    }
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: { name, email: email || null, address: address || null },
+  });
+
+  const token = signAccessToken({ userId: updated.id, role: 'CUSTOMER' });
+  return {
+    token,
+    user: {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+      isVerified: true,
+    },
+  };
 };
 
-module.exports = { register, login, verifyOtp, resendOtp };
+const resendOtp = async ({ phone }) => {
+  const user = await prisma.user.findFirst({ where: { phone } });
+  if (!user) {
+    const err = new Error('Account not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  await dispatchOtp(user.id, phone);
+  return { message: 'OTP resent to your phone.' };
+};
+
+module.exports = { requestOtp, verifyOtp, completeRegistration, resendOtp };

@@ -48,8 +48,9 @@ model Session {
 
 model User {
   id                String   @id @default(cuid())
-  name              String
-  email             String   @unique
+  name              String?
+  email             String?  @unique
+  address           String?
   passwordHash      String?  @map("password_hash")
   phone             String?  @unique
   role              Role     @default(CUSTOMER)
@@ -73,17 +74,21 @@ model User {
 }
 
 model Vehicle {
-  id            String      @id @default(cuid())
-  userId        String      @map("user_id")
-  vehicleTypeId String      @map("vehicle_type_id")
-  plateNumber   String      @map("plate_number")
-  createdAt     DateTime    @default(now()) @map("created_at")
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  vehicleTypeId String    @map("vehicle_type_id")
+  carModelId    String?   @map("car_model_id")
+  fuelType      FuelType? @map("fuel_type")
+  plateNumber   String    @map("plate_number")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   user        User        @relation(fields: [userId], references: [id])
   vehicleType VehicleType @relation(fields: [vehicleTypeId], references: [id])
+  carModel    CarModel?   @relation(fields: [carModelId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([vehicleTypeId])
+  @@index([carModelId])
   @@map("vehicles")
 }
 
@@ -129,8 +134,57 @@ model VehicleType {
 
   servicePricings ServicePricing[]
   vehicles        Vehicle[]
+  carModels       CarModel[]
+  bookings        Booking[]
 
   @@map("vehicle_types")
+}
+
+// ─── Car Brands & Models ─────────────────────────────────
+
+enum FuelType {
+  PETROL
+  DIESEL
+  CNG
+  ELECTRIC
+  HYBRID
+}
+
+model CarBrand {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  slug      String     @unique
+  isActive  Boolean    @default(true) @map("is_active")
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  models CarModel[]
+
+  @@index([isActive])
+  @@map("car_brands")
+}
+
+model CarModel {
+  id            String     @id @default(cuid())
+  brandId       String     @map("brand_id")
+  vehicleTypeId String     @map("vehicle_type_id")
+  name          String
+  slug          String     @unique
+  fuelTypes     FuelType[] @default([]) @map("fuel_types")
+  isActive      Boolean    @default(true) @map("is_active")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  brand       CarBrand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  vehicleType VehicleType @relation(fields: [vehicleTypeId], references: [id])
+  vehicles    Vehicle[]
+  bookings    Booking[]
+
+  @@unique([brandId, name])
+  @@index([brandId])
+  @@index([vehicleTypeId])
+  @@index([isActive])
+  @@map("car_models")
 }
 
 // ─── Services ────────────────────────────────────────────
@@ -223,21 +277,28 @@ enum BookingStatus {
 }
 
 model Booking {
-  id          String        @id @default(cuid())
-  userId      String        @map("user_id")
-  serviceId   String        @map("service_id")
-  status      BookingStatus @default(PENDING)
-  scheduledAt DateTime      @map("scheduled_at")
-  notes       String?
-  totalAmount Decimal       @db.Decimal(10, 2) @map("total_amount")
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  id            String        @id @default(cuid())
+  userId        String        @map("user_id")
+  serviceId     String        @map("service_id")
+  vehicleTypeId String?       @map("vehicle_type_id")
+  carModelId    String?       @map("car_model_id")
+  fuelType      FuelType?     @map("fuel_type")
+  plateNumber   String?       @map("plate_number")
+  status        BookingStatus @default(PENDING)
+  scheduledAt   DateTime      @map("scheduled_at")
+  notes         String?
+  totalAmount   Decimal       @db.Decimal(10, 2) @map("total_amount")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
 
-  user        User    @relation(fields: [userId], references: [id])
-  service     Service @relation(fields: [serviceId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  service     Service      @relation(fields: [serviceId], references: [id])
+  vehicleType VehicleType? @relation(fields: [vehicleTypeId], references: [id])
+  carModel    CarModel?    @relation(fields: [carModelId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([serviceId])
+  @@index([vehicleTypeId])
   @@index([status])
   @@index([scheduledAt])
   @@map("bookings")

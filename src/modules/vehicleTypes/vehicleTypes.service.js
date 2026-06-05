@@ -30,6 +30,13 @@ const update = async (id, data) => {
 
 const remove = async (id) => {
   await getById(id);
+  const modelCount = await prisma.carModel.count({ where: { vehicleTypeId: id } });
+  if (modelCount > 0) {
+    throw Object.assign(
+      new Error(`Reassign or delete the ${modelCount} car model(s) using this vehicle type first`),
+      { statusCode: 409 }
+    );
+  }
   await prisma.servicePricing.deleteMany({ where: { vehicleTypeId: id } });
   try { await prisma.vehicle.deleteMany({ where: { vehicleTypeId: id } }) } catch (e) {
     if (e?.code !== 'P2021') throw e;

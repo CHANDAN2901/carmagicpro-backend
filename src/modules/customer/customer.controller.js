@@ -69,14 +69,24 @@ const getMyVehicles = async (req, res, next) => {
     const vehicles = await prisma.vehicle.findMany({
       where: { userId: req.user.userId },
       orderBy: { createdAt: 'desc' },
-      include: { vehicleType: { select: { id: true, name: true, slug: true } } },
+      include: {
+        vehicleType: { select: { id: true, name: true, slug: true } },
+        carModel: {
+          select: {
+            id: true, name: true, fuelTypes: true,
+            brand: { select: { id: true, name: true } },
+          },
+        },
+      },
     });
     res.json({ success: true, vehicles });
   } catch (err) { next(err); }
 };
 
 const addVehicleSchema = z.object({
-  vehicleTypeId: z.string().cuid(),
+  vehicleTypeId: z.string().cuid().optional(),
+  carModelId: z.string().cuid().optional(),
+  fuelType: z.enum(['PETROL', 'DIESEL', 'CNG', 'ELECTRIC', 'HYBRID']).optional(),
   plateNumber: z.string().min(4).max(20).regex(/^[A-Z0-9 -]+$/i),
 });
 
@@ -84,12 +94,39 @@ const addVehicleSchema = z.object({
 const addVehicle = async (req, res, next) => {
   try {
     const data = addVehicleSchema.parse(req.body);
-    const vehicleType = await prisma.vehicleType.findUnique({ where: { id: data.vehicleTypeId } });
+
+    let resolvedVehicleTypeId = data.vehicleTypeId;
+    if (data.carModelId && !resolvedVehicleTypeId) {
+      const carModel = await prisma.carModel.findUnique({
+        where: { id: data.carModelId },
+        select: { vehicleTypeId: true },
+      });
+      if (carModel) resolvedVehicleTypeId = carModel.vehicleTypeId;
+    }
+    if (!resolvedVehicleTypeId) {
+      return res.status(400).json({ success: false, message: 'vehicleTypeId or carModelId is required' });
+    }
+
+    const vehicleType = await prisma.vehicleType.findUnique({ where: { id: resolvedVehicleTypeId } });
     if (!vehicleType) return res.status(404).json({ success: false, message: 'Vehicle type not found' });
 
     const vehicle = await prisma.vehicle.create({
-      data: { userId: req.user.userId, ...data },
-      include: { vehicleType: { select: { id: true, name: true, slug: true } } },
+      data: {
+        userId: req.user.userId,
+        vehicleTypeId: resolvedVehicleTypeId,
+        carModelId: data.carModelId ?? null,
+        fuelType: data.fuelType ?? null,
+        plateNumber: data.plateNumber,
+      },
+      include: {
+        vehicleType: { select: { id: true, name: true, slug: true } },
+        carModel: {
+          select: {
+            id: true, name: true, fuelTypes: true,
+            brand: { select: { id: true, name: true } },
+          },
+        },
+      },
     });
     res.status(201).json({ success: true, vehicle });
   } catch (err) { next(err); }
@@ -110,7 +147,9 @@ const deleteVehicle = async (req, res, next) => {
 
 const createBookingSchema = z.object({
   serviceId: z.string().min(1),
-  vehicleTypeId: z.string().optional(),
+  vehicleTypeId: z.string().cuid().optional(),
+  carModelId: z.string().cuid().optional(),
+  fuelType: z.enum(['PETROL', 'DIESEL', 'CNG', 'ELECTRIC', 'HYBRID']).optional(),
   plateNumber: z.string().optional(),
   slotDate: z.string().min(1, 'Date is required'),
   slotTime: z.string().min(1, 'Time is required'),
@@ -129,15 +168,33 @@ const createBooking = async (req, res, next) => {
     const service = await prisma.service.findUnique({ where: { id: data.serviceId } });
     if (!service) return res.status(404).json({ success: false, message: 'Service not found' });
 
-    // combine slotDate + slotTime into ISO datetime
     const scheduledAt = new Date(`${data.slotDate}T${data.slotTime}:00`);
     if (isNaN(scheduledAt.getTime())) {
       return res.status(400).json({ success: false, message: 'Invalid date or time' });
     }
 
-    let totalAmount = Number(service.price);
+    // Resolve vehicleTypeId: use explicit value or derive from carModelId
+    let resolvedVehicleTypeId = data.vehicleTypeId ?? null;
+    if (data.carModelId && !resolvedVehicleTypeId) {
+      const carModel = await prisma.carModel.findUnique({
+        where: { id: data.carModelId },
+        select: { vehicleTypeId: true },
+      });
+      if (carModel) resolvedVehicleTypeId = carModel.vehicleTypeId;
+    }
 
-    // apply coupon discount if provided
+    // Pricing: ServicePricing[serviceId × vehicleTypeId] → service.price fallback
+    let totalAmount = Number(service.price);
+    if (resolvedVehicleTypeId) {
+      const pricing = await prisma.servicePricing.findUnique({
+        where: {
+          serviceId_vehicleTypeId: { serviceId: data.serviceId, vehicleTypeId: resolvedVehicleTypeId },
+        },
+      });
+      if (pricing) totalAmount = Number(pricing.price);
+    }
+
+    // Apply coupon discount
     if (data.couponCode) {
       const coupon = await prisma.coupon.findFirst({
         where: { code: data.couponCode, isActive: true },
@@ -156,11 +213,14 @@ const createBooking = async (req, res, next) => {
       data: {
         userId: req.user.userId,
         serviceId: data.serviceId,
+        vehicleTypeId: resolvedVehicleTypeId,
+        carModelId: data.carModelId ?? null,
+        fuelType: data.fuelType ?? null,
+        plateNumber: data.plateNumber ?? null,
         scheduledAt,
         totalAmount,
         notes: [
-          data.plateNumber ? `Vehicle: ${data.plateNumber}` : null,
-          data.isHomePickup ? `Home pickup` : null,
+          data.isHomePickup ? 'Home pickup' : null,
           data.address ? `Address: ${data.address}` : null,
           data.paymentMethod ? `Payment: ${data.paymentMethod}` : null,
           data.notes ?? null,
@@ -169,6 +229,13 @@ const createBooking = async (req, res, next) => {
       },
       include: {
         service: { select: { id: true, name: true, price: true } },
+        vehicleType: { select: { id: true, name: true } },
+        carModel: {
+          select: {
+            id: true, name: true,
+            brand: { select: { name: true } },
+          },
+        },
       },
     });
 

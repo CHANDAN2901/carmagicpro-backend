@@ -12,42 +12,26 @@ const setAuthCookie = (res, token) => {
   res.cookie('access_token', token, { ...COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 * 1000 });
 };
 
-const identifierSchema = z.string().min(1).refine(
-  (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) || /^[6-9]\d{9}$/.test(val),
-  { message: 'Must be a valid email or 10-digit phone number' }
-);
-
-const registerSchema = z.object({
-  name: z.string().min(1).max(100),
-  email: z.string().email(),
-  phone: z.string().regex(/^[6-9]\d{9}$/, 'Invalid phone number').optional(),
-});
-
-const loginSchema = z.object({
-  identifier: identifierSchema,
+const phoneSchema = z.object({
+  phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
 });
 
 const verifyOtpSchema = z.object({
-  identifier: identifierSchema,
+  phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
   otp: z.string().length(6, 'OTP must be 6 digits'),
 });
 
-const resendOtpSchema = z.object({
-  identifier: identifierSchema,
+const completeRegistrationSchema = z.object({
+  phone: z.string().regex(/^[6-9]\d{9}$/),
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+  email: z.string().email('Invalid email address').optional().or(z.literal('')),
+  address: z.string().max(300).optional().or(z.literal('')),
 });
 
-const register = async (req, res, next) => {
+const requestOtp = async (req, res, next) => {
   try {
-    const data = registerSchema.parse(req.body);
-    const result = await service.register(data);
-    res.status(201).json({ success: true, ...result });
-  } catch (err) { next(err); }
-};
-
-const login = async (req, res, next) => {
-  try {
-    const data = loginSchema.parse(req.body);
-    const result = await service.login(data);
+    const data = phoneSchema.parse(req.body);
+    const result = await service.requestOtp(data);
     res.json({ success: true, ...result });
   } catch (err) { next(err); }
 };
@@ -64,9 +48,26 @@ const verifyOtp = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+const completeRegistration = async (req, res, next) => {
+  try {
+    const raw = completeRegistrationSchema.parse(req.body);
+    const data = {
+      ...raw,
+      email: raw.email || undefined,
+      address: raw.address || undefined,
+    };
+    const result = await service.completeRegistration(data);
+    if (result.token) {
+      setAuthCookie(res, result.token);
+    }
+    const { token: _t, ...safeResult } = result;
+    res.status(201).json({ success: true, ...safeResult });
+  } catch (err) { next(err); }
+};
+
 const resendOtp = async (req, res, next) => {
   try {
-    const data = resendOtpSchema.parse(req.body);
+    const data = phoneSchema.parse(req.body);
     const result = await service.resendOtp(data);
     res.json({ success: true, ...result });
   } catch (err) { next(err); }
@@ -77,4 +78,4 @@ const logout = (req, res) => {
   res.json({ success: true, message: 'Logged out' });
 };
 
-module.exports = { register, login, verifyOtp, resendOtp, logout };
+module.exports = { requestOtp, verifyOtp, completeRegistration, resendOtp, logout };

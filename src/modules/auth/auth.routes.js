@@ -14,9 +14,9 @@ router.post('/reset-password', ctrl.resetPassword);
 router.post('/logout', authenticate, ctrl.logout);
 
 // Customer auth
-router.post('/customer/register', customerCtrl.register);
-router.post('/customer/login', customerCtrl.login);
+router.post('/customer/request-otp', customerCtrl.requestOtp);
 router.post('/customer/verify-otp', customerCtrl.verifyOtp);
+router.post('/customer/complete-registration', customerCtrl.completeRegistration);
 router.post('/customer/resend-otp', customerCtrl.resendOtp);
 router.post('/customer/logout', customerCtrl.logout);
 
