@@ -14,6 +14,7 @@ const createServiceSchema = z.object({
   price: z.number().positive(),
   durationMins: z.number().int().positive(),
   images: imagesSchema,
+  isActive: z.boolean().optional(),
   pricings: z.array(pricingSchema).optional(),
 });
 

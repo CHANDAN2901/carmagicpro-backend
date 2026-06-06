@@ -18,6 +18,7 @@ const createProductSchema = z.object({
   sku: z.string().optional(),
   stock: z.number().int().min(0).default(0),
   images: imagesSchema,
+  isActive: z.boolean().optional(),
   variations: z.array(variationSchema).optional().default([]),
 });
 

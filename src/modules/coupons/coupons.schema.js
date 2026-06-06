@@ -9,6 +9,7 @@ const createCouponSchema = z.object({
   usageLimit: z.number().int().positive().optional(),
   validFrom: z.string().min(1),
   validTo: z.string().min(1),
+  isActive: z.boolean().optional(),
 });
 
 const updateCouponSchema = z.object({
