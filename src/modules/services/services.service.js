@@ -47,7 +47,13 @@ const upsertPricings = async (serviceId, pricings) => {
 const create = async (data) => {
   const { pricings, ...serviceData } = data;
   const slug = toSlug(serviceData.name);
-  const service = await prisma.service.create({ data: { ...serviceData, slug } });
+  // Only one service may be featured at a time — clear any existing one first.
+  const service = await prisma.$transaction(async (tx) => {
+    if (serviceData.isFeatured) {
+      await tx.service.updateMany({ where: { isFeatured: true }, data: { isFeatured: false } });
+    }
+    return tx.service.create({ data: { ...serviceData, slug } });
+  });
   await upsertPricings(service.id, pricings);
   return getById(service.id);
 };
@@ -56,7 +62,13 @@ const update = async (id, data) => {
   await getById(id);
   const { pricings, ...serviceData } = data;
   if (serviceData.name) serviceData.slug = toSlug(serviceData.name);
-  const service = await prisma.service.update({ where: { id }, data: serviceData });
+  // Only one service may be featured at a time — clear any other featured service first.
+  const service = await prisma.$transaction(async (tx) => {
+    if (serviceData.isFeatured === true) {
+      await tx.service.updateMany({ where: { isFeatured: true, NOT: { id } }, data: { isFeatured: false } });
+    }
+    return tx.service.update({ where: { id }, data: serviceData });
+  });
   await upsertPricings(service.id, pricings);
   return getById(service.id);
 };

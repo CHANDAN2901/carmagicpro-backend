@@ -199,6 +199,7 @@ model Service {
   durationMins Int      @map("duration_mins")
   images       String[] @default([])
   isActive     Boolean  @default(true) @map("is_active")
+  isFeatured   Boolean  @default(false) @map("is_featured")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -208,6 +209,7 @@ model Service {
 
   @@index([categoryId])
   @@index([isActive])
+  @@index([isFeatured])
   @@map("services")
 }
 
