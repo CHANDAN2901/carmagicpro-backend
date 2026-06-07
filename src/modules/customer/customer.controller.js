@@ -84,8 +84,9 @@ const getMyVehicles = async (req, res, next) => {
 };
 
 const addVehicleSchema = z.object({
-  vehicleTypeId: z.string().uuid().optional(),
-  carModelId: z.string().uuid().optional(),
+  // IDs are CUIDs (Prisma @default(cuid())), not UUIDs.
+  vehicleTypeId: z.string().min(1).optional(),
+  carModelId: z.string().min(1).optional(),
   fuelType: z.enum(['PETROL', 'DIESEL', 'CNG', 'ELECTRIC', 'HYBRID']).optional(),
   plateNumber: z.string().min(4).max(20).regex(/^[A-Z0-9 -]+$/i),
 });
@@ -147,8 +148,9 @@ const deleteVehicle = async (req, res, next) => {
 
 const createBookingSchema = z.object({
   serviceId: z.string().min(1),
-  vehicleTypeId: z.string().uuid().optional(),
-  carModelId: z.string().uuid().optional(),
+  // IDs are CUIDs (Prisma @default(cuid())), not UUIDs.
+  vehicleTypeId: z.string().min(1).optional(),
+  carModelId: z.string().min(1).optional(),
   fuelType: z.enum(['PETROL', 'DIESEL', 'CNG', 'ELECTRIC', 'HYBRID']).optional(),
   plateNumber: z.string().optional(),
   slotDate: z.string().min(1, 'Date is required'),
@@ -247,8 +249,8 @@ const createBooking = async (req, res, next) => {
 const createOrderSchema = z.object({
   items: z.array(z.object({
     productId: z.string().min(1),
+    variationId: z.string().min(1, 'variationId is required'),
     qty: z.number().int().positive(),
-    variationId: z.string().optional(),
   })).min(1),
   address: z.string().min(1, 'Delivery address is required'),
   couponCode: z.string().optional(),
@@ -261,22 +263,31 @@ const createOrder = async (req, res, next) => {
   try {
     const data = createOrderSchema.parse(req.body);
 
-    // fetch products to lock server-side prices
-    const productIds = data.items.map((i) => i.productId);
-    const products = await prisma.product.findMany({
-      where: { id: { in: productIds } },
-      select: { id: true, name: true, price: true, stock: true },
+    // Pricing lives on variations — lock the unit price server-side from the
+    // chosen variation (a customer cannot influence what they're charged).
+    const variationIds = data.items.map((i) => i.variationId);
+    const variations = await prisma.productVariation.findMany({
+      where: { id: { in: variationIds } },
+      select: {
+        id: true, productId: true, name: true, price: true, discountPrice: true,
+        product: { select: { id: true, name: true, isActive: true } },
+      },
     });
-    const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+    const variationMap = Object.fromEntries(variations.map((v) => [v.id, v]));
 
     for (const item of data.items) {
-      const product = productMap[item.productId];
-      if (!product) return res.status(404).json({ success: false, message: `Product ${item.productId} not found` });
-      if (product.stock < item.qty) return res.status(400).json({ success: false, message: `Insufficient stock for ${product.name}` });
+      const variation = variationMap[item.variationId];
+      if (!variation) return res.status(404).json({ success: false, message: `Variant ${item.variationId} not found` });
+      // The variant must belong to the claimed product and the product must be active.
+      if (variation.productId !== item.productId || !variation.product?.isActive) {
+        return res.status(404).json({ success: false, message: `Variant ${item.variationId} is not available` });
+      }
     }
 
+    const unitPriceOf = (variation) => Number(variation.discountPrice ?? variation.price);
+
     let totalAmount = data.items.reduce((sum, item) => {
-      return sum + Number(productMap[item.productId].price) * item.qty;
+      return sum + unitPriceOf(variationMap[item.variationId]) * item.qty;
     }, 0);
 
     if (data.couponCode) {
@@ -291,36 +302,52 @@ const createOrder = async (req, res, next) => {
       }
     }
 
-    const order = await prisma.order.create({
-      data: {
-        userId: req.user.userId,
-        totalAmount,
-        status: 'PENDING',
-        notes: [
-          data.address ? `Address: ${data.address}` : null,
-          data.paymentMethod ? `Payment: ${data.paymentMethod}` : null,
-          data.notes ?? null,
-        ].filter(Boolean).join(' | ') || null,
-        items: {
-          create: data.items.map((item) => ({
-            productId: item.productId,
-            quantity: item.qty,
-            unitPrice: productMap[item.productId].price,
-          })),
-        },
-      },
-      include: {
-        items: { include: { product: { select: { id: true, name: true, images: true } } } },
-      },
-    });
+    // Create the order and decrement variant stock atomically. The conditional
+    // updateMany (stock >= qty) prevents two concurrent orders from overselling.
+    let order;
+    try {
+      order = await prisma.$transaction(async (tx) => {
+        for (const item of data.items) {
+          const decremented = await tx.productVariation.updateMany({
+            where: { id: item.variationId, stock: { gte: item.qty } },
+            data: { stock: { decrement: item.qty } },
+          });
+          if (decremented.count === 0) {
+            const variation = variationMap[item.variationId];
+            const err = new Error(`Insufficient stock for ${variation.product.name} (${variation.name})`);
+            err.statusCode = 400;
+            throw err;
+          }
+        }
 
-    // decrement stock
-    await Promise.all(data.items.map((item) =>
-      prisma.product.update({
-        where: { id: item.productId },
-        data: { stock: { decrement: item.qty } },
-      })
-    ));
+        return tx.order.create({
+          data: {
+            userId: req.user.userId,
+            totalAmount,
+            status: 'PENDING',
+            notes: [
+              data.address ? `Address: ${data.address}` : null,
+              data.paymentMethod ? `Payment: ${data.paymentMethod}` : null,
+              data.notes ?? null,
+            ].filter(Boolean).join(' | ') || null,
+            items: {
+              create: data.items.map((item) => ({
+                productId: item.productId,
+                variationId: item.variationId,
+                quantity: item.qty,
+                unitPrice: unitPriceOf(variationMap[item.variationId]),
+              })),
+            },
+          },
+          include: {
+            items: { include: { product: { select: { id: true, name: true, images: true } } } },
+          },
+        });
+      });
+    } catch (err) {
+      if (err.statusCode === 400) return res.status(400).json({ success: false, message: err.message });
+      throw err;
+    }
 
     res.status(201).json({ success: true, order });
   } catch (err) { next(err); }

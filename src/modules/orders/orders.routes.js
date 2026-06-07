@@ -4,8 +4,11 @@ const { authenticate } = require('../../middleware/auth');
 
 const router = Router();
 
-// Public — customer places a product order
-router.post('/', controller.createPublic);
+// NOTE: customers place product orders via POST /customer/orders
+// (customer.controller.createOrder), which prices and decrements stock by
+// variation. The previous public POST /orders route priced off the product
+// base price (now removed) and has been retired to keep a single, correct
+// order entry point.
 
 router.use(authenticate);
 

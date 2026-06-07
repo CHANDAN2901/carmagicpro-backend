@@ -233,10 +233,13 @@ model Product {
   name          String
   slug          String   @unique
   description   String?
-  price         Decimal  @db.Decimal(10, 2)
+  // Pricing/stock now live on variants. These columns are kept nullable
+  // for backward-compat (legacy rows, invoice readers) and are no longer
+  // authoritative — a later cleanup migration can drop them.
+  price         Decimal? @db.Decimal(10, 2)
   discountPrice Decimal? @db.Decimal(10, 2) @map("discount_price")
   sku           String?
-  stock         Int      @default(0)
+  stock         Int?
   images        String[] @default([])
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -252,16 +255,18 @@ model Product {
 }
 
 model ProductVariation {
-  id        String   @id @default(cuid())
-  productId String   @map("product_id")
-  name      String
-  sku       String?
-  price     Decimal  @db.Decimal(10, 2)
-  stock     Int      @default(0)
-  images    String[] @default([])
-  createdAt DateTime @default(now()) @map("created_at")
+  id            String   @id @default(cuid())
+  productId     String   @map("product_id")
+  name          String
+  sku           String?
+  price         Decimal  @db.Decimal(10, 2)
+  discountPrice Decimal? @db.Decimal(10, 2) @map("discount_price")
+  stock         Int      @default(0)
+  images        String[] @default([])
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
 
   @@map("product_variations")
 }
@@ -357,12 +362,12 @@ model Coupon {
 model CouponUsage {
   id        String   @id @default(cuid())
   couponId  String   @map("coupon_id")
-  userEmail String   @map("user_email")
+  userPhone String   @map("user_phone")
   usedAt    DateTime @default(now()) @map("used_at")
 
   coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
 
-  @@unique([couponId, userEmail])
+  @@unique([couponId, userPhone])
   @@map("coupon_usages")
 }
 
@@ -394,17 +399,20 @@ model Order {
 }
 
 model OrderItem {
-  id        String  @id @default(cuid())
-  orderId   String  @map("order_id")
-  productId String  @map("product_id")
-  quantity  Int
-  unitPrice Decimal @db.Decimal(10, 2) @map("unit_price")
+  id          String  @id @default(cuid())
+  orderId     String  @map("order_id")
+  productId   String  @map("product_id")
+  variationId String? @map("variation_id")
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2) @map("unit_price")
 
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id])
+  order     Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product           @relation(fields: [productId], references: [id])
+  variation ProductVariation? @relation(fields: [variationId], references: [id])
 
   @@index([orderId])
   @@index([productId])
+  @@index([variationId])
   @@map("order_items")
 }
 

@@ -31,10 +31,12 @@ async function main() {
   const adminEmail = 'info@carmagicpro.com';
   const passwordHash = await bcrypt.hash('Admin123', 12);
 
-  const admin = await prisma.admin.upsert({
+  // Admins are Users with role ADMIN (the standalone Admin model was removed
+  // in the email-auth refactor).
+  const admin = await prisma.user.upsert({
     where:  { email: adminEmail },
-    update: { passwordHash, isVerified: true },
-    create: { email: adminEmail, passwordHash, isVerified: true },
+    update: { passwordHash, isVerified: true, role: 'ADMIN' },
+    create: { email: adminEmail, name: 'Admin', passwordHash, isVerified: true, role: 'ADMIN' },
   });
 
   console.log('✅ Admin:', admin.email, '/ password: Admin123');
@@ -137,58 +139,85 @@ async function main() {
   console.log(`✅ ${pricingMatrix.length} service pricings seeded`);
 
   // ── Products ───────────────────────────────────────────────
+  // Pricing/stock live entirely on variations. A "simple" product is just a
+  // product with one variant (named "Standard"). Multi-variant products list
+  // each option; the website shows the lowest-priced variant on cards.
   const products = [
-    { name: 'Car Shampoo 1L',          slug: 'car-shampoo-1l',         categorySlug: 'car-care',    price: 299,  discountPrice: 249,  sku: 'SH-001', stock: 50  },
-    { name: 'Microfiber Towel Set',     slug: 'microfiber-towel-set',   categorySlug: 'car-care',    price: 499,  discountPrice: 399,  sku: 'MT-001', stock: 100 },
-    { name: 'Dashboard Polish 200ml',   slug: 'dashboard-polish-200ml', categorySlug: 'car-care',    price: 349,  discountPrice: null, sku: 'DP-001', stock: 30  },
-    { name: 'Car Wax Paste 500g',       slug: 'car-wax-paste-500g',     categorySlug: 'car-care',    price: 799,  discountPrice: 699,  sku: 'WX-001', stock: 20  },
-    { name: 'Seat Cover - Universal',   slug: 'seat-cover-universal',   categorySlug: 'accessories', price: 1299, discountPrice: 999,  sku: 'SC-001', stock: 40  },
-    { name: 'Anti-Dust Floor Mats',     slug: 'anti-dust-floor-mats',   categorySlug: 'accessories', price: 699,  discountPrice: 599,  sku: 'FM-001', stock: 60  },
-    { name: 'Tyre Shine Spray 500ml',   slug: 'tyre-shine-spray-500ml', categorySlug: 'car-care',    price: 249,  discountPrice: null, sku: 'TS-001', stock: 45  },
-    { name: 'Air Freshener Pack (3)',   slug: 'air-freshener-pack-3',   categorySlug: 'accessories', price: 199,  discountPrice: 149,  sku: 'AF-001', stock: 80  },
+    {
+      name: 'Car Shampoo 1L', slug: 'car-shampoo-1l', categorySlug: 'car-care',
+      variations: [
+        { name: '1L',    sku: 'SH-001',   price: 299, discountPrice: 249, stock: 50 },
+        { name: '500ml', sku: 'SH-001-S', price: 179, discountPrice: null, stock: 30 },
+        { name: '2L',    sku: 'SH-001-L', price: 499, discountPrice: null, stock: 20 },
+      ],
+    },
+    {
+      name: 'Microfiber Towel Set', slug: 'microfiber-towel-set', categorySlug: 'car-care',
+      variations: [{ name: 'Standard', sku: 'MT-001', price: 499, discountPrice: 399, stock: 100 }],
+    },
+    {
+      name: 'Dashboard Polish 200ml', slug: 'dashboard-polish-200ml', categorySlug: 'car-care',
+      variations: [{ name: 'Standard', sku: 'DP-001', price: 349, discountPrice: null, stock: 30 }],
+    },
+    {
+      name: 'Car Wax Paste 500g', slug: 'car-wax-paste-500g', categorySlug: 'car-care',
+      variations: [
+        { name: '500g', sku: 'WX-001',   price: 799, discountPrice: 699, stock: 20 },
+        { name: '250g', sku: 'WX-001-S', price: 449, discountPrice: null, stock: 15 },
+      ],
+    },
+    {
+      name: 'Seat Cover - Universal', slug: 'seat-cover-universal', categorySlug: 'accessories',
+      variations: [
+        { name: 'Beige', sku: 'SC-001-B',  price: 1299, discountPrice: 999, stock: 20 },
+        { name: 'Black', sku: 'SC-001-BL', price: 1299, discountPrice: 999, stock: 20 },
+      ],
+    },
+    {
+      name: 'Anti-Dust Floor Mats', slug: 'anti-dust-floor-mats', categorySlug: 'accessories',
+      variations: [{ name: 'Standard', sku: 'FM-001', price: 699, discountPrice: 599, stock: 60 }],
+    },
+    {
+      name: 'Tyre Shine Spray 500ml', slug: 'tyre-shine-spray-500ml', categorySlug: 'car-care',
+      variations: [{ name: 'Standard', sku: 'TS-001', price: 249, discountPrice: null, stock: 45 }],
+    },
+    {
+      name: 'Air Freshener Pack (3)', slug: 'air-freshener-pack-3', categorySlug: 'accessories',
+      variations: [{ name: 'Standard', sku: 'AF-001', price: 199, discountPrice: 149, stock: 80 }],
+    },
   ];
 
   const productMap = {};
+  let variationCount = 0;
   for (const prod of products) {
     const record = await prisma.product.upsert({
       where:  { slug: prod.slug },
-      update: { name: prod.name, price: prod.price, discountPrice: prod.discountPrice, stock: prod.stock },
+      update: { name: prod.name, categoryId: catMap[prod.categorySlug], isActive: true },
       create: {
-        name:          prod.name,
-        slug:          prod.slug,
-        categoryId:    catMap[prod.categorySlug],
-        price:         prod.price,
-        discountPrice: prod.discountPrice,
-        sku:           prod.sku,
-        stock:         prod.stock,
-        isActive:      true,
+        name:       prod.name,
+        slug:       prod.slug,
+        categoryId: catMap[prod.categorySlug],
+        isActive:   true,
       },
     });
     productMap[prod.slug] = record.id;
+
+    // Reset variations to match the seed definition (idempotent).
+    await prisma.productVariation.deleteMany({ where: { productId: record.id } });
+    await prisma.productVariation.createMany({
+      data: prod.variations.map((v) => ({
+        productId:     record.id,
+        name:          v.name,
+        sku:           v.sku,
+        price:         v.price,
+        discountPrice: v.discountPrice,
+        stock:         v.stock,
+      })),
+    });
+    variationCount += prod.variations.length;
   }
   console.log(`✅ ${products.length} products seeded`);
-
-  // ── Product Variations ─────────────────────────────────────
-  const variations = [
-    { productSlug: 'car-shampoo-1l',   name: '500ml',  sku: 'SH-001-S', price: 179, stock: 30 },
-    { productSlug: 'car-shampoo-1l',   name: '2L',     sku: 'SH-001-L', price: 499, stock: 20 },
-    { productSlug: 'car-wax-paste-500g', name: '250g', sku: 'WX-001-S', price: 449, stock: 15 },
-    { productSlug: 'seat-cover-universal', name: 'Beige', sku: 'SC-001-B', price: 1299, stock: 20 },
-    { productSlug: 'seat-cover-universal', name: 'Black', sku: 'SC-001-BL', price: 1299, stock: 20 },
-  ];
-
-  for (const v of variations) {
-    if (!productMap[v.productSlug]) continue;
-    const existing = await prisma.productVariation.findFirst({
-      where: { productId: productMap[v.productSlug], name: v.name },
-    });
-    if (!existing) {
-      await prisma.productVariation.create({
-        data: { productId: productMap[v.productSlug], name: v.name, sku: v.sku, price: v.price, stock: v.stock },
-      });
-    }
-  }
-  console.log(`✅ ${variations.length} product variations seeded`);
+  console.log(`✅ ${variationCount} product variations seeded`);
 
   // ── Slot Config ────────────────────────────────────────────
   const existingSlot = await prisma.slotConfig.findFirst();

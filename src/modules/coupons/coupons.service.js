@@ -62,7 +62,7 @@ const apply = async ({ code, amount, userPhone }) => {
   }
 
   const usage = await prisma.couponUsage.findUnique({
-    where: { couponId_userEmail: { couponId: coupon.id, userEmail: userPhone } },
+    where: { couponId_userPhone: { couponId: coupon.id, userPhone } },
   });
   if (usage) {
     throw Object.assign(new Error('You have already used this coupon'), { statusCode: 400 });
@@ -87,9 +87,9 @@ const apply = async ({ code, amount, userPhone }) => {
 };
 
 // Call this when booking is confirmed to record usage
-const recordUsage = async (couponId, userEmail) => {
+const recordUsage = async (couponId, userPhone) => {
   await prisma.$transaction([
-    prisma.couponUsage.create({ data: { couponId, userEmail } }),
+    prisma.couponUsage.create({ data: { couponId, userPhone } }),
     prisma.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } }),
   ]);
 };
