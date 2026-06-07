@@ -18,6 +18,7 @@ router.post('/customer/request-otp', customerCtrl.requestOtp);
 router.post('/customer/verify-otp', customerCtrl.verifyOtp);
 router.post('/customer/complete-registration', customerCtrl.completeRegistration);
 router.post('/customer/resend-otp', customerCtrl.resendOtp);
+router.post('/customer/refresh', customerCtrl.refresh);
 router.post('/customer/logout', customerCtrl.logout);
 
 module.exports = router;

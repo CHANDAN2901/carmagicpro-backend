@@ -31,8 +31,8 @@ const verifyOtp = async (req, res, next) => {
     const body = verifyOtpSchema.parse(req.body);
     const { accessToken, refreshToken } = await authService.verifyOtp(body);
 
-    res.cookie('access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 4 * 60 * 60 * 1000 });
-    res.cookie('refresh_token', refreshToken, { ...COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.cookie('admin_access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 4 * 60 * 60 * 1000 });
+    res.cookie('admin_refresh_token', refreshToken, { ...COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 * 1000 });
 
     res.json({ success: true, message: 'Logged in' });
   } catch (err) {
@@ -71,13 +71,14 @@ const resetPassword = async (req, res, next) => {
 };
 
 const refresh = (req, res) => {
-  const token = req.cookies?.refresh_token;
+  const token = req.cookies?.admin_refresh_token;
   if (!token) return res.status(401).json({ success: false, message: 'No refresh token' });
 
   try {
     const decoded = verifyRefreshToken(token);
+    if (decoded.role !== 'ADMIN') return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     const accessToken = signAccessToken({ userId: decoded.userId, role: decoded.role, email: decoded.email });
-    res.cookie('access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 4 * 60 * 60 * 1000 });
+    res.cookie('admin_access_token', accessToken, { ...COOKIE_OPTIONS, maxAge: 4 * 60 * 60 * 1000 });
     res.json({ success: true, message: 'Token refreshed' });
   } catch {
     res.status(401).json({ success: false, message: 'Invalid or expired refresh token' });
@@ -85,8 +86,8 @@ const refresh = (req, res) => {
 };
 
 const logout = (req, res) => {
-  res.clearCookie('access_token', COOKIE_OPTIONS);
-  res.clearCookie('refresh_token', COOKIE_OPTIONS);
+  res.clearCookie('admin_access_token', COOKIE_OPTIONS);
+  res.clearCookie('admin_refresh_token', COOKIE_OPTIONS);
   res.json({ success: true, message: 'Logged out' });
 };
 

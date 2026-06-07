@@ -1,11 +1,61 @@
+const crypto = require('crypto');
 const prisma = require('../../config/prisma');
 const { generateOtp, otpExpiresAt } = require('../../utils/otp');
-const { signAccessToken } = require('../../utils/jwt');
+const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../../utils/jwt');
 const { sendOtpSms } = require('../../utils/sms');
 const { NODE_ENV } = require('../../config/env');
 
 const MAX_OTP_ATTEMPTS = 3;
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+
+// Refresh tokens are stored hashed in the Session table so a DB leak can't yield usable tokens.
+const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+
+// Issues a short-lived access token + long-lived refresh token for a customer and
+// persists the (hashed) refresh token as a Session row for revocation + device tracking.
+const issueCustomerTokens = async (userId, deviceInfo) => {
+  const accessToken = signAccessToken({ userId, role: 'CUSTOMER' });
+  const refreshToken = signRefreshToken({ userId, role: 'CUSTOMER' });
+  const decoded = verifyRefreshToken(refreshToken); // exp is in seconds
+  await prisma.session.create({
+    data: {
+      userId,
+      token: hashToken(refreshToken),
+      expiresAt: new Date(decoded.exp * 1000),
+      deviceInfo: deviceInfo || null,
+    },
+  });
+  return { accessToken, refreshToken };
+};
+
+// Validates a customer refresh token (signature + role + an un-revoked, unexpired Session row)
+// and mints a fresh access token. No rotation — avoids the multi-tab refresh race.
+const refreshCustomerSession = async (refreshToken) => {
+  if (!refreshToken) {
+    const err = new Error('No refresh token'); err.statusCode = 401; throw err;
+  }
+  let decoded;
+  try {
+    decoded = verifyRefreshToken(refreshToken);
+  } catch {
+    const err = new Error('Invalid or expired refresh token'); err.statusCode = 401; throw err;
+  }
+  if (decoded.role !== 'CUSTOMER') {
+    const err = new Error('Invalid or expired refresh token'); err.statusCode = 401; throw err;
+  }
+  const session = await prisma.session.findUnique({ where: { token: hashToken(refreshToken) } });
+  if (!session || session.expiresAt < new Date()) {
+    const err = new Error('Session expired. Please log in again.'); err.statusCode = 401; throw err;
+  }
+  const accessToken = signAccessToken({ userId: decoded.userId, role: 'CUSTOMER' });
+  return { accessToken };
+};
+
+// Revokes a customer session (logout) by deleting its stored refresh-token row.
+const revokeCustomerSession = async (refreshToken) => {
+  if (!refreshToken) return;
+  await prisma.session.deleteMany({ where: { token: hashToken(refreshToken) } });
+};
 
 const dispatchOtp = async (userId, phone) => {
   const last = await prisma.otp.findFirst({
@@ -56,7 +106,7 @@ const requestOtp = async ({ phone }) => {
   return { message: 'OTP sent to your phone.' };
 };
 
-const verifyOtp = async ({ phone, otp }) => {
+const verifyOtp = async ({ phone, otp }, deviceInfo) => {
   const user = await prisma.user.findFirst({ where: { phone } });
   if (!user) {
     const err = new Error('Account not found');
@@ -99,14 +149,14 @@ const verifyOtp = async ({ phone, otp }) => {
     return { isNewUser: true };
   }
 
-  const token = signAccessToken({ userId: user.id, role: 'CUSTOMER' });
+  const tokens = await issueCustomerTokens(user.id, deviceInfo);
   return {
-    token,
+    ...tokens,
     user: { id: user.id, name: user.name, email: user.email, phone: user.phone, isVerified: true },
   };
 };
 
-const completeRegistration = async ({ phone, name, email, address }) => {
+const completeRegistration = async ({ phone, name, email, address }, deviceInfo) => {
   const user = await prisma.user.findFirst({ where: { phone } });
 
   if (!user) {
@@ -141,9 +191,9 @@ const completeRegistration = async ({ phone, name, email, address }) => {
     data: { name, email: email || null, address: address || null },
   });
 
-  const token = signAccessToken({ userId: updated.id, role: 'CUSTOMER' });
+  const tokens = await issueCustomerTokens(updated.id, deviceInfo);
   return {
-    token,
+    ...tokens,
     user: {
       id: updated.id,
       name: updated.name,
@@ -166,4 +216,11 @@ const resendOtp = async ({ phone }) => {
   return { message: 'OTP resent to your phone.' };
 };
 
-module.exports = { requestOtp, verifyOtp, completeRegistration, resendOtp };
+module.exports = {
+  requestOtp,
+  verifyOtp,
+  completeRegistration,
+  resendOtp,
+  refreshCustomerSession,
+  revokeCustomerSession,
+};
