@@ -9,4 +9,14 @@ const getStats = async (req, res, next) => {
   }
 };
 
-module.exports = { getStats };
+const getTrends = async (req, res, next) => {
+  try {
+    const { from, to } = req.query;
+    const data = await dashboardService.getTrends({ from, to });
+    res.json({ success: true, ...data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getStats, getTrends };

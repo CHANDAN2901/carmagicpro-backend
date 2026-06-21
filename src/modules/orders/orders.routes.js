@@ -14,6 +14,7 @@ router.use(authenticate);
 
 // Admin — manage all orders
 router.get('/', controller.getAll);
+router.get('/export', controller.exportExcel); // must precede '/:id'
 router.get('/:id', controller.getById);
 router.patch('/:id', controller.update);
 router.delete('/:id', controller.remove);

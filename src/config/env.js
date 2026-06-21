@@ -29,6 +29,12 @@ module.exports = {
   ZEPTO_FROM_EMAIL: process.env.ZEPTO_FROM_EMAIL,
   ZEPTO_FROM_NAME: process.env.ZEPTO_FROM_NAME,
   CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:5173',
+  // Where "new booking/order" notifications are sent. Falls back to the sender address.
+  ADMIN_NOTIFY_EMAIL: process.env.ADMIN_NOTIFY_EMAIL || process.env.ZEPTO_FROM_EMAIL,
+  // Contact details surfaced to customers in transactional emails.
+  SUPPORT_EMAIL: process.env.SUPPORT_EMAIL || process.env.ZEPTO_FROM_EMAIL,
+  SUPPORT_NUMBER: process.env.SUPPORT_NUMBER || '+91 00000 00000',
+  WEBSITE_URL: process.env.WEBSITE_URL || 'https://carmagicpro.com',
   SMS_SENDER_ID: process.env.SMS_SENDER_ID,
   SMS_API_KEY: process.env.SMS_API_KEY,
   SMS_CLIENT_ID: process.env.SMS_CLIENT_ID,

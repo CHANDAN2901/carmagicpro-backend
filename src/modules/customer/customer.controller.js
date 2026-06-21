@@ -1,5 +1,19 @@
 const { z } = require('zod');
 const prisma = require('../../config/prisma');
+const { generateBookingNumber, generateOrderNumber } = require('../../utils/entityNumber');
+const {
+  sendBookingConfirmationEmail,
+  sendBookingNotificationToAdmin,
+  sendOrderConfirmationEmail,
+  sendOrderNotificationToAdmin,
+} = require('../../utils/mailer');
+
+// Human-readable labels for notification emails.
+const PAYMENT_METHOD_LABELS = { COD: 'Cash on Delivery', RAZORPAY: 'Online (Razorpay)' };
+const paymentMethodLabel = (m) => PAYMENT_METHOD_LABELS[m] ?? m ?? '—';
+// Orders/bookings are created PENDING; payment is collected later (COD on
+// delivery/service, Razorpay before confirmation).
+const paymentStatusLabel = () => 'Pending';
 
 // GET /customer/me
 const getProfile = async (req, res, next) => {
@@ -162,6 +176,47 @@ const createBookingSchema = z.object({
   notes: z.string().optional(),
 });
 
+const fmtDate = (d) => {
+  try {
+    return new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch { return d; }
+};
+const fmtAmount = (n) => Number(n).toFixed(2);
+
+// Builds the email payloads and dispatches customer + admin booking emails.
+const sendBookingEmails = async (userId, booking, data) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true, email: true, phone: true },
+  });
+
+  const vehicleModel = booking.carModel
+    ? [booking.carModel.brand?.name, booking.carModel.name].filter(Boolean).join(' ')
+    : null;
+  const serviceAddress = data.address || (data.isHomePickup ? 'Home pickup' : 'Workshop / Walk-in');
+
+  const payload = {
+    bookingNumber: booking.bookingNumber,
+    customerName: user?.name ?? 'Customer',
+    customerEmail: user?.email ?? null,
+    customerMobile: user?.phone ?? null,
+    serviceName: booking.service?.name ?? '—',
+    vehicleNumber: booking.plateNumber ?? '—',
+    vehicleModel,
+    bookingDate: fmtDate(data.slotDate),
+    bookingTime: data.slotTime,
+    serviceAddress,
+    paymentMethod: paymentMethodLabel(data.paymentMethod),
+    paymentStatus: paymentStatusLabel(),
+    amount: fmtAmount(booking.totalAmount),
+    notes: data.notes ?? null,
+  };
+
+  const tasks = [sendBookingNotificationToAdmin(payload)];
+  if (user?.email) tasks.push(sendBookingConfirmationEmail(user.email, payload));
+  await Promise.allSettled(tasks);
+};
+
 // POST /customer/bookings
 const createBooking = async (req, res, next) => {
   try {
@@ -212,8 +267,11 @@ const createBooking = async (req, res, next) => {
       }
     }
 
+    const bookingNumber = await generateBookingNumber();
+
     const booking = await prisma.booking.create({
       data: {
+        bookingNumber,
         userId: req.user.userId,
         serviceId: data.serviceId,
         vehicleTypeId: resolvedVehicleTypeId,
@@ -243,6 +301,10 @@ const createBooking = async (req, res, next) => {
     });
 
     res.status(201).json({ success: true, booking });
+
+    // Fire-and-forget notifications — email failures must not fail the booking.
+    sendBookingEmails(req.user.userId, booking, data).catch((err) =>
+      console.error('[booking email] failed:', err?.message));
   } catch (err) { next(err); }
 };
 
@@ -320,8 +382,11 @@ const createOrder = async (req, res, next) => {
           }
         }
 
+        const orderNumber = await generateOrderNumber(tx);
+
         return tx.order.create({
           data: {
+            orderNumber,
             userId: req.user.userId,
             totalAmount,
             status: 'PENDING',
@@ -350,7 +415,42 @@ const createOrder = async (req, res, next) => {
     }
 
     res.status(201).json({ success: true, order });
+
+    // Fire-and-forget notifications — email failures must not fail the order.
+    sendOrderEmails(req.user.userId, order, data).catch((err) =>
+      console.error('[order email] failed:', err?.message));
   } catch (err) { next(err); }
+};
+
+// Builds the email payloads and dispatches customer + admin order emails.
+const sendOrderEmails = async (userId, order, data) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true, email: true, phone: true },
+  });
+
+  const items = (order.items ?? []).map((it) => ({
+    name: it.product?.name ?? 'Item',
+    qty: it.quantity,
+    amount: fmtAmount(Number(it.unitPrice) * it.quantity),
+  }));
+
+  const payload = {
+    orderNumber: order.orderNumber,
+    customerName: user?.name ?? 'Customer',
+    customerEmail: user?.email ?? null,
+    customerMobile: user?.phone ?? null,
+    items,
+    deliveryAddress: data.address ?? '—',
+    paymentMethod: paymentMethodLabel(data.paymentMethod),
+    paymentStatus: paymentStatusLabel(),
+    amount: fmtAmount(order.totalAmount),
+    notes: data.notes ?? null,
+  };
+
+  const tasks = [sendOrderNotificationToAdmin(payload)];
+  if (user?.email) tasks.push(sendOrderConfirmationEmail(user.email, payload));
+  await Promise.allSettled(tasks);
 };
 
 module.exports = { getProfile, updateProfile, getMyBookings, getMyOrders, getMyVehicles, addVehicle, deleteVehicle, createBooking, createOrder };

@@ -47,26 +47,26 @@ model Session {
 // ─── Users (Customers) ───────────────────────────────────
 
 model User {
-  id                String   @id @default(cuid())
-  name              String?
-  email             String?  @unique
-  address           String?
-  passwordHash      String?  @map("password_hash")
-  phone             String?  @unique
-  role              Role     @default(CUSTOMER)
-  isVerified        Boolean  @default(false) @map("is_verified")
-  isActive          Boolean  @default(true) @map("is_active")
-  twoFactorEnabled  Boolean  @default(false) @map("two_factor_enabled")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(cuid())
+  name             String?
+  email            String?  @unique
+  address          String?
+  passwordHash     String?  @map("password_hash")
+  phone            String?  @unique
+  role             Role     @default(CUSTOMER)
+  isVerified       Boolean  @default(false) @map("is_verified")
+  isActive         Boolean  @default(true) @map("is_active")
+  twoFactorEnabled Boolean  @default(false) @map("two_factor_enabled")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  otps      Otp[]
-  sessions  Session[]
-  bookings  Booking[]
-  orders    Order[]
-  payments  Payment[]
-  invoices  Invoice[]
-  vehicles  Vehicle[]
+  otps     Otp[]
+  sessions Session[]
+  bookings Booking[]
+  orders   Order[]
+  payments Payment[]
+  invoices Invoice[]
+  vehicles Vehicle[]
 
   @@index([role])
   @@index([createdAt])
@@ -112,10 +112,10 @@ model Category {
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")
 
-  parent      Category?    @relation("CategoryTree", fields: [parentId], references: [id])
-  children    Category[]   @relation("CategoryTree")
-  services    Service[]
-  products    Product[]
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  services Service[]
+  products Product[]
 
   @@index([parentId])
   @@index([type])
@@ -151,12 +151,12 @@ enum FuelType {
 }
 
 model CarBrand {
-  id        String     @id @default(cuid())
-  name      String     @unique
-  slug      String     @unique
-  isActive  Boolean    @default(true) @map("is_active")
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   models CarModel[]
 
@@ -203,9 +203,9 @@ model Service {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  category  Category?        @relation(fields: [categoryId], references: [id])
-  bookings  Booking[]
-  pricings  ServicePricing[]
+  category Category?        @relation(fields: [categoryId], references: [id])
+  bookings Booking[]
+  pricings ServicePricing[]
 
   @@index([categoryId])
   @@index([isActive])
@@ -239,7 +239,7 @@ model Product {
   // for backward-compat (legacy rows, invoice readers) and are no longer
   // authoritative — a later cleanup migration can drop them.
   price         Decimal? @db.Decimal(10, 2)
-  discountPrice Decimal? @db.Decimal(10, 2) @map("discount_price")
+  discountPrice Decimal? @map("discount_price") @db.Decimal(10, 2)
   sku           String?
   stock         Int?
   images        String[] @default([])
@@ -247,9 +247,9 @@ model Product {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  category    Category?         @relation(fields: [categoryId], references: [id])
-  orderItems  OrderItem[]
-  variations  ProductVariation[]
+  category   Category?          @relation(fields: [categoryId], references: [id])
+  orderItems OrderItem[]
+  variations ProductVariation[]
 
   @@index([categoryId])
   @@index([isActive])
@@ -262,7 +262,7 @@ model ProductVariation {
   name          String
   sku           String?
   price         Decimal  @db.Decimal(10, 2)
-  discountPrice Decimal? @db.Decimal(10, 2) @map("discount_price")
+  discountPrice Decimal? @map("discount_price") @db.Decimal(10, 2)
   stock         Int      @default(0)
   images        String[] @default([])
   createdAt     DateTime @default(now()) @map("created_at")
@@ -285,6 +285,7 @@ enum BookingStatus {
 
 model Booking {
   id            String        @id @default(cuid())
+  bookingNumber String?       @unique @map("booking_number")
   userId        String        @map("user_id")
   serviceId     String        @map("service_id")
   vehicleTypeId String?       @map("vehicle_type_id")
@@ -294,7 +295,7 @@ model Booking {
   status        BookingStatus @default(PENDING)
   scheduledAt   DateTime      @map("scheduled_at")
   notes         String?
-  totalAmount   Decimal       @db.Decimal(10, 2) @map("total_amount")
+  totalAmount   Decimal       @map("total_amount") @db.Decimal(10, 2)
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
@@ -345,8 +346,8 @@ model Coupon {
   code           String     @unique
   type           CouponType
   value          Decimal    @db.Decimal(10, 2)
-  maxDiscount    Decimal?   @db.Decimal(10, 2) @map("max_discount")
-  minOrderAmount Decimal?   @db.Decimal(10, 2) @map("min_order_amount")
+  maxDiscount    Decimal?   @map("max_discount") @db.Decimal(10, 2)
+  minOrderAmount Decimal?   @map("min_order_amount") @db.Decimal(10, 2)
   usageLimit     Int?       @map("usage_limit")
   usedCount      Int        @default(0) @map("used_count")
   validFrom      DateTime   @map("valid_from")
@@ -385,15 +386,16 @@ enum OrderStatus {
 
 model Order {
   id          String      @id @default(cuid())
+  orderNumber String?     @unique @map("order_number")
   userId      String      @map("user_id")
   status      OrderStatus @default(PENDING)
-  totalAmount Decimal     @db.Decimal(10, 2) @map("total_amount")
+  totalAmount Decimal     @map("total_amount") @db.Decimal(10, 2)
   notes       String?
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")
 
-  user        User        @relation(fields: [userId], references: [id])
-  items       OrderItem[]
+  user  User        @relation(fields: [userId], references: [id])
+  items OrderItem[]
 
   @@index([userId])
   @@index([status])
@@ -406,7 +408,7 @@ model OrderItem {
   productId   String  @map("product_id")
   variationId String? @map("variation_id")
   quantity    Int
-  unitPrice   Decimal @db.Decimal(10, 2) @map("unit_price")
+  unitPrice   Decimal @map("unit_price") @db.Decimal(10, 2)
 
   order     Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product   Product           @relation(fields: [productId], references: [id])
@@ -477,16 +479,16 @@ model Payment {
   razorpaySignature String?           @map("razorpay_signature")
   couponId          String?           @map("coupon_id")
   couponCode        String?           @map("coupon_code")
-  discountAmount    Decimal?          @db.Decimal(10, 2) @map("discount_amount")
-  grossAmount       Decimal           @db.Decimal(10, 2) @map("gross_amount")
+  discountAmount    Decimal?          @map("discount_amount") @db.Decimal(10, 2)
+  grossAmount       Decimal           @map("gross_amount") @db.Decimal(10, 2)
   notes             String?
   failureReason     String?           @map("failure_reason")
   capturedAt        DateTime?         @map("captured_at")
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  user    User     @relation(fields: [userId], references: [id])
-  coupon  Coupon?  @relation(fields: [couponId], references: [id])
+  user    User         @relation(fields: [userId], references: [id])
+  coupon  Coupon?      @relation(fields: [couponId], references: [id])
   invoice Invoice?
   refunds Refund[]
   logs    PaymentLog[]
@@ -522,10 +524,10 @@ model Invoice {
   userId            String            @map("user_id")
   lineItemsSnapshot Json              @map("line_items_snapshot")
   subtotal          Decimal           @db.Decimal(10, 2)
-  discountAmount    Decimal           @default(0) @db.Decimal(10, 2) @map("discount_amount")
-  taxAmount         Decimal           @default(0) @db.Decimal(10, 2) @map("tax_amount")
-  totalAmount       Decimal           @db.Decimal(10, 2) @map("total_amount")
-  taxRate           Decimal?          @db.Decimal(5, 2) @map("tax_rate")
+  discountAmount    Decimal           @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  taxAmount         Decimal           @default(0) @map("tax_amount") @db.Decimal(10, 2)
+  totalAmount       Decimal           @map("total_amount") @db.Decimal(10, 2)
+  taxRate           Decimal?          @map("tax_rate") @db.Decimal(5, 2)
   taxLabel          String?           @default("GST") @map("tax_label")
   couponCode        String?           @map("coupon_code")
   notes             String?
@@ -545,6 +547,15 @@ model InvoiceCounter {
   lastSeq Int @default(0) @map("last_seq")
 
   @@map("invoice_counter")
+}
+
+// Per-day sequence counters for human-readable entity numbers
+// (e.g. id "BOOKING-260619" / "ORDER-260619"). Sequence resets each day.
+model DailyCounter {
+  id      String @id
+  lastSeq Int    @default(0) @map("last_seq")
+
+  @@map("daily_counters")
 }
 
 model Refund {

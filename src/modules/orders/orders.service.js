@@ -1,4 +1,5 @@
 const prisma = require('../../config/prisma');
+const { generateOrderNumber } = require('../../utils/entityNumber');
 
 const getAll = async ({ userId, status, page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
@@ -23,6 +24,24 @@ const getAll = async ({ userId, status, page = 1, limit = 20 } = {}) => {
   return { orders, total, page, limit };
 };
 
+// All orders created within an inclusive date range, with relations needed for
+// the Excel export. No pagination — the range bounds the result size.
+const getForExport = async ({ gte, lte }) => {
+  return prisma.order.findMany({
+    where: { createdAt: { gte, lte } },
+    include: {
+      user: { select: { name: true, email: true, phone: true } },
+      items: {
+        include: {
+          product: { select: { name: true } },
+          variation: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+};
+
 const getById = async (id) => {
   const order = await prisma.order.findUnique({
     where: { id },
@@ -37,9 +56,11 @@ const getById = async (id) => {
 
 const create = async ({ userId, items, notes }) => {
   const totalAmount = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+  const orderNumber = await generateOrderNumber();
 
   return prisma.order.create({
     data: {
+      orderNumber,
       userId,
       notes,
       totalAmount,
@@ -86,9 +107,11 @@ const createPublic = async ({ userId, items, notes }) => {
     }
 
     const totalAmount = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+    const orderNumber = await generateOrderNumber(tx);
 
     return tx.order.create({
       data: {
+        orderNumber,
         userId,
         notes,
         totalAmount,
@@ -113,4 +136,4 @@ const remove = async (id) => {
   return prisma.order.delete({ where: { id } });
 };
 
-module.exports = { getAll, getById, create, createPublic, update, remove };
+module.exports = { getAll, getForExport, getById, create, createPublic, update, remove };
