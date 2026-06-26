@@ -3,6 +3,7 @@ const { z } = require('zod');
 const pricingSchema = z.object({
   vehicleTypeId: z.string().min(1),
   price: z.number().positive(),
+  originalPrice: z.number().positive().optional().nullable(),
 });
 
 const imagesSchema = z.array(z.string().url()).max(10).optional().default([]);
@@ -16,6 +17,7 @@ const createServiceSchema = z.object({
   images: imagesSchema,
   isActive: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
+  defaultVehicleTypeId: z.string().optional().nullable(),
   pricings: z.array(pricingSchema).optional(),
 });
 
@@ -28,6 +30,7 @@ const updateServiceSchema = z.object({
   images: imagesSchema,
   isActive: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
+  defaultVehicleTypeId: z.string().optional().nullable(),
   pricings: z.array(pricingSchema).optional(),
 });
 

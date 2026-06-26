@@ -37,8 +37,8 @@ const upsertPricings = async (serviceId, pricings) => {
     pricings.map((p) =>
       prisma.servicePricing.upsert({
         where: { serviceId_vehicleTypeId: { serviceId, vehicleTypeId: p.vehicleTypeId } },
-        create: { serviceId, vehicleTypeId: p.vehicleTypeId, price: p.price },
-        update: { price: p.price },
+        create: { serviceId, vehicleTypeId: p.vehicleTypeId, price: p.price, originalPrice: p.originalPrice ?? null },
+        update: { price: p.price, originalPrice: p.originalPrice ?? null },
       })
     )
   );
