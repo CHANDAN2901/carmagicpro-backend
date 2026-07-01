@@ -18,6 +18,19 @@ const getRazorpay = async () => {
   });
 };
 
+// ── Membership helper ────────────────────────────────────
+
+// Activates a membership on successful payment: 1-year term from today.
+const activateMembership = (client, membershipId) => {
+  const startDate = new Date();
+  const expiresAt = new Date(startDate);
+  expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+  return client.membership.update({
+    where: { id: membershipId },
+    data: { status: 'ACTIVE', startDate, expiresAt },
+  });
+};
+
 // ── Invoice helpers ──────────────────────────────────────
 
 const generateInvoiceNumber = async () => {
@@ -30,6 +43,19 @@ const generateInvoiceNumber = async () => {
 };
 
 const buildLineItemsSnapshot = async (entityType, entityId) => {
+  if (entityType === 'MEMBERSHIP') {
+    const membership = await prisma.membership.findUnique({ where: { id: entityId } });
+    if (!membership) return [];
+    return [
+      {
+        name: membership.planName,
+        washesPerYear: membership.washesPerYear,
+        unitPrice: Number(membership.price),
+        quantity: 1,
+        total: Number(membership.price),
+      },
+    ];
+  }
   if (entityType === 'BOOKING') {
     const booking = await prisma.booking.findUnique({
       where: { id: entityId },
@@ -115,6 +141,10 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     const booking = await prisma.booking.findUnique({ where: { id: entityId }, select: { totalAmount: true } });
     if (!booking) { const e = new Error('Booking not found'); e.statusCode = 404; throw e; }
     grossAmount = Number(booking.totalAmount);
+  } else if (entityType === 'MEMBERSHIP') {
+    const membership = await prisma.membership.findUnique({ where: { id: entityId }, select: { price: true } });
+    if (!membership) { const e = new Error('Membership not found'); e.statusCode = 404; throw e; }
+    grossAmount = Number(membership.price);
   } else {
     const order = await prisma.order.findUnique({ where: { id: entityId }, select: { totalAmount: true } });
     if (!order) { const e = new Error('Order not found'); e.statusCode = 404; throw e; }
@@ -172,6 +202,8 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     // Confirm entity immediately for COD
     if (entityType === 'BOOKING') {
       await prisma.booking.update({ where: { id: entityId }, data: { status: 'CONFIRMED' } });
+    } else if (entityType === 'MEMBERSHIP') {
+      await activateMembership(prisma, entityId);
     } else {
       await prisma.order.update({ where: { id: entityId }, data: { status: 'CONFIRMED' } });
     }
@@ -265,6 +297,8 @@ const verifyPayment = async ({ razorpayOrderId, razorpayPaymentId, razorpaySigna
     await createInvoice(tx, payment);
     if (payment.entityType === 'BOOKING') {
       await tx.booking.update({ where: { id: payment.entityId }, data: { status: 'CONFIRMED' } });
+    } else if (payment.entityType === 'MEMBERSHIP') {
+      await activateMembership(tx, payment.entityId);
     } else {
       await tx.order.update({ where: { id: payment.entityId }, data: { status: 'CONFIRMED' } });
     }

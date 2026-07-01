@@ -49,7 +49,8 @@ const verifyOtp = async (req, res, next) => {
   try {
     const data = verifyOtpSchema.parse(req.body);
     const result = await service.verifyOtp(data, req.get('user-agent'));
-    // result has tokens for an existing user, or { isNewUser: true } for a fresh signup.
+    // Tokens are issued for every verified user (new or returning). The isNewUser
+    // flag tells the client to collect name/email at checkout.
     if (result.accessToken) setAuthCookies(res, result);
     res.json({ success: true, ...result });
   } catch (err) { next(err); }

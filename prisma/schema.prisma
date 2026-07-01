@@ -60,13 +60,14 @@ model User {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  otps     Otp[]
-  sessions Session[]
-  bookings Booking[]
-  orders   Order[]
-  payments Payment[]
-  invoices Invoice[]
-  vehicles Vehicle[]
+  otps        Otp[]
+  sessions    Session[]
+  bookings    Booking[]
+  orders      Order[]
+  payments    Payment[]
+  invoices    Invoice[]
+  vehicles    Vehicle[]
+  memberships Membership[]
 
   @@index([role])
   @@index([createdAt])
@@ -424,11 +425,47 @@ model OrderItem {
   @@map("order_items")
 }
 
+// ─── Memberships ─────────────────────────────────────────
+// Annual membership plans are STATIC (defined in code at
+// src/modules/memberships/plans.js) — there is no plan catalog table. A
+// Membership row is the record of one customer's purchase: which plan, what
+// price, and when it expires. It is purchased through the shared Payment engine
+// via entityType = MEMBERSHIP, and activates on successful payment.
+
+enum MembershipStatus {
+  PENDING
+  ACTIVE
+  CANCELLED
+}
+
+model Membership {
+  id               String           @id @default(cuid())
+  membershipNumber String?          @unique @map("membership_number")
+  userId           String           @map("user_id")
+  planKey          String           @map("plan_key")
+  planName         String           @map("plan_name")
+  washesPerYear    Int              @map("washes_per_year")
+  price            Decimal          @db.Decimal(10, 2)
+  status           MembershipStatus @default(PENDING)
+  startDate        DateTime?        @map("start_date")
+  expiresAt        DateTime?        @map("expires_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("memberships")
+}
+
 // ─── Payments ────────────────────────────────────────────
 
 enum PaymentEntityType {
   BOOKING
   ORDER
+  MEMBERSHIP
 }
 
 enum PaymentStatus {

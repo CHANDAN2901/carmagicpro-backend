@@ -1,7 +1,7 @@
 const { z } = require('zod');
 
 const createOrderSchema = z.object({
-  entityType: z.enum(['BOOKING', 'ORDER']),
+  entityType: z.enum(['BOOKING', 'ORDER', 'MEMBERSHIP']),
   entityId: z.string().min(1),
   couponCode: z.string().optional(),
   method: z.enum(['UPI', 'CARD', 'NETBANKING', 'WALLET', 'COD', 'OTHER']).optional(),
@@ -20,7 +20,7 @@ const refundSchema = z.object({
 });
 
 const listQuerySchema = z.object({
-  entityType: z.enum(['BOOKING', 'ORDER']).optional(),
+  entityType: z.enum(['BOOKING', 'ORDER', 'MEMBERSHIP']).optional(),
   status: z.string().optional(),
   method: z.string().optional(),
   from: z.string().optional(),

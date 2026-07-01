@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { customerAuthenticate } = require('../../middleware/customerAuth');
 const ctrl = require('./customer.controller');
+const membershipsCtrl = require('../memberships/memberships.controller');
 
 const router = Router();
 
@@ -12,6 +13,8 @@ router.get('/bookings', ctrl.getMyBookings);
 router.post('/bookings', ctrl.createBooking);
 router.get('/orders', ctrl.getMyOrders);
 router.post('/orders', ctrl.createOrder);
+router.get('/memberships', membershipsCtrl.getMine);
+router.post('/memberships', membershipsCtrl.createForCustomer);
 router.get('/vehicles', ctrl.getMyVehicles);
 router.post('/vehicles', ctrl.addVehicle);
 router.delete('/vehicles/:id', ctrl.deleteVehicle);

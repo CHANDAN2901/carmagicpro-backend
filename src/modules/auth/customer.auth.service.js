@@ -144,14 +144,13 @@ const verifyOtp = async ({ phone, otp }, deviceInfo) => {
   await prisma.otp.delete({ where: { id: record.id } });
   await prisma.user.update({ where: { id: user.id }, data: { isVerified: true } });
 
-  // New user — has no name yet, must complete profile
-  if (!user.name) {
-    return { isNewUser: true };
-  }
-
+  // OTP alone authenticates the customer. New users (no name yet) are logged in
+  // immediately; their name/email are captured later at checkout. The isNewUser
+  // flag lets the client know it still needs to gather those details at buy time.
   const tokens = await issueCustomerTokens(user.id, deviceInfo);
   return {
     ...tokens,
+    isNewUser: !user.name,
     user: { id: user.id, name: user.name, email: user.email, phone: user.phone, isVerified: true },
   };
 };
