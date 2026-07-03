@@ -1,8 +1,113 @@
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
 const { PrismaClient } = require('@prisma/client');
+const {
+  sendMembershipConfirmationEmail,
+  sendMembershipNotificationToAdmin,
+  sendBookingConfirmationEmail,
+  sendBookingNotificationToAdmin,
+} = require('../../utils/mailer');
 
 const prisma = new PrismaClient();
+
+const fmtDate = (d) => {
+  try {
+    return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch { return String(d ?? ''); }
+};
+
+// Fire-and-forget: notify customer + admin that a membership is now active.
+// Called after activateMembership so startDate/expiresAt are set. paymentMethod
+// / paymentStatus reflect how the membership was paid for (COD vs online).
+const sendMembershipEmails = async (membershipId, { paymentMethod, paymentStatus, amount }) => {
+  const membership = await prisma.membership.findUnique({
+    where: { id: membershipId },
+    include: { user: { select: { name: true, email: true, phone: true } } },
+  });
+  if (!membership) return;
+
+  const validity = membership.startDate && membership.expiresAt
+    ? `${fmtDate(membership.startDate)} – ${fmtDate(membership.expiresAt)}`
+    : null;
+
+  const payload = {
+    membershipNumber: membership.membershipNumber,
+    customerName: membership.user?.name ?? 'Customer',
+    customerEmail: membership.user?.email ?? null,
+    customerMobile: membership.user?.phone ?? null,
+    planName: membership.planName,
+    washesPerYear: membership.washesPerYear,
+    validity,
+    paymentMethod,
+    paymentStatus,
+    amount: Number(amount ?? membership.price).toFixed(2),
+  };
+
+  const tasks = [sendMembershipNotificationToAdmin(payload)];
+  if (membership.user?.email) tasks.push(sendMembershipConfirmationEmail(membership.user.email, payload));
+  await Promise.allSettled(tasks);
+};
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// The booking's address / home-pickup flag / customer note are flattened into the
+// `notes` column at creation (see customer.controller.createBooking). Un-flatten
+// them here so the confirmation email shows a clean address + the customer's note.
+const parseBookingNotes = (notes) => {
+  const segments = (notes ?? '').split(' | ').map((s) => s.trim()).filter(Boolean);
+  let address = null;
+  let homePickup = false;
+  const rest = [];
+  for (const seg of segments) {
+    if (seg === 'Home pickup') homePickup = true;
+    else if (seg.startsWith('Address: ')) address = seg.slice('Address: '.length);
+    else if (seg.startsWith('Payment: ')) { /* internal marker — drop */ }
+    else rest.push(seg);
+  }
+  const serviceAddress = address || (homePickup ? 'Home pickup' : 'Workshop / Walk-in');
+  return { serviceAddress, customerNotes: rest.join(' | ') || null };
+};
+
+// Fire-and-forget: notify customer + admin that a booking is confirmed. Called on
+// successful payment (COD placed / Razorpay verified), not at booking creation.
+const sendBookingEmails = async (bookingId, { paymentMethod, paymentStatus, amount }) => {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      service: { select: { name: true } },
+      carModel: { select: { name: true, brand: { select: { name: true } } } },
+      user: { select: { name: true, email: true, phone: true } },
+    },
+  });
+  if (!booking) return;
+
+  const { serviceAddress, customerNotes } = parseBookingNotes(booking.notes);
+  const vehicleModel = booking.carModel
+    ? [booking.carModel.brand?.name, booking.carModel.name].filter(Boolean).join(' ')
+    : null;
+  const scheduled = booking.scheduledAt;
+
+  const payload = {
+    bookingNumber: booking.bookingNumber,
+    customerName: booking.user?.name ?? 'Customer',
+    customerEmail: booking.user?.email ?? null,
+    customerMobile: booking.user?.phone ?? null,
+    serviceName: booking.service?.name ?? '—',
+    vehicleNumber: booking.plateNumber ?? '—',
+    vehicleModel,
+    bookingDate: fmtDate(scheduled),
+    bookingTime: `${pad2(scheduled.getHours())}:${pad2(scheduled.getMinutes())}`,
+    serviceAddress,
+    paymentMethod,
+    paymentStatus,
+    amount: Number(amount ?? booking.totalAmount).toFixed(2),
+    notes: customerNotes,
+  };
+
+  const tasks = [sendBookingNotificationToAdmin(payload)];
+  if (booking.user?.email) tasks.push(sendBookingConfirmationEmail(booking.user.email, payload));
+  await Promise.allSettled(tasks);
+};
 
 const getRazorpayMode = async () => {
   const setting = await prisma.appSetting.findUnique({ where: { key: 'razorpay_mode' } });
@@ -202,8 +307,18 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     // Confirm entity immediately for COD
     if (entityType === 'BOOKING') {
       await prisma.booking.update({ where: { id: entityId }, data: { status: 'CONFIRMED' } });
+      sendBookingEmails(entityId, {
+        paymentMethod: 'Cash on Delivery',
+        paymentStatus: 'Pending (Cash on Delivery)',
+        amount: finalAmount,
+      }).catch((err) => console.error('[booking email] failed:', err?.message));
     } else if (entityType === 'MEMBERSHIP') {
       await activateMembership(prisma, entityId);
+      sendMembershipEmails(entityId, {
+        paymentMethod: 'Cash on Delivery',
+        paymentStatus: 'Pending (Cash on Delivery)',
+        amount: finalAmount,
+      }).catch((err) => console.error('[membership email] failed:', err?.message));
     } else {
       await prisma.order.update({ where: { id: entityId }, data: { status: 'CONFIRMED' } });
     }
@@ -303,6 +418,21 @@ const verifyPayment = async ({ razorpayOrderId, razorpayPaymentId, razorpaySigna
       await tx.order.update({ where: { id: payment.entityId }, data: { status: 'CONFIRMED' } });
     }
   });
+
+  // Fire-and-forget confirmation emails after the tx commits (status is persisted).
+  if (payment.entityType === 'MEMBERSHIP') {
+    sendMembershipEmails(payment.entityId, {
+      paymentMethod: 'Online (Razorpay)',
+      paymentStatus: 'Paid',
+      amount: payment.amount,
+    }).catch((err) => console.error('[membership email] failed:', err?.message));
+  } else if (payment.entityType === 'BOOKING') {
+    sendBookingEmails(payment.entityId, {
+      paymentMethod: 'Online (Razorpay)',
+      paymentStatus: 'Paid',
+      amount: payment.amount,
+    }).catch((err) => console.error('[booking email] failed:', err?.message));
+  }
 
   return { success: true };
 };

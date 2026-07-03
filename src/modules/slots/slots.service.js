@@ -1,4 +1,5 @@
 const prisma = require('../../config/prisma');
+const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
 
 const DEFAULT_CONFIG = { workStartTime: '09:00', workEndTime: '18:00', employeeTeams: 3, slotIntervalMins: 30 };
 
@@ -51,6 +52,9 @@ const getAvailableSlots = async ({ date, serviceId }) => {
   }
 
   if (candidates.length === 0) return [];
+
+  // Release abandoned holds first so their slots don't stay blocked forever.
+  await releaseStaleBookings();
 
   // Fetch all non-cancelled bookings for that date that involve this service's window
   const dayStart = new Date(date);

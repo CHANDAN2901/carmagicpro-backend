@@ -1,9 +1,8 @@
 const { z } = require('zod');
 const prisma = require('../../config/prisma');
 const { generateBookingNumber, generateOrderNumber } = require('../../utils/entityNumber');
+const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
 const {
-  sendBookingConfirmationEmail,
-  sendBookingNotificationToAdmin,
   sendOrderConfirmationEmail,
   sendOrderNotificationToAdmin,
 } = require('../../utils/mailer');
@@ -48,6 +47,8 @@ const updateProfile = async (req, res, next) => {
 // GET /customer/bookings
 const getMyBookings = async (req, res, next) => {
   try {
+    // Drop abandoned (unpaid, expired) holds so they don't show up as bookings.
+    await releaseStaleBookings();
     const bookings = await prisma.booking.findMany({
       where: { userId: req.user.userId },
       orderBy: { createdAt: 'desc' },
@@ -176,46 +177,7 @@ const createBookingSchema = z.object({
   notes: z.string().optional(),
 });
 
-const fmtDate = (d) => {
-  try {
-    return new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  } catch { return d; }
-};
 const fmtAmount = (n) => Number(n).toFixed(2);
-
-// Builds the email payloads and dispatches customer + admin booking emails.
-const sendBookingEmails = async (userId, booking, data) => {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { name: true, email: true, phone: true },
-  });
-
-  const vehicleModel = booking.carModel
-    ? [booking.carModel.brand?.name, booking.carModel.name].filter(Boolean).join(' ')
-    : null;
-  const serviceAddress = data.address || (data.isHomePickup ? 'Home pickup' : 'Workshop / Walk-in');
-
-  const payload = {
-    bookingNumber: booking.bookingNumber,
-    customerName: user?.name ?? 'Customer',
-    customerEmail: user?.email ?? null,
-    customerMobile: user?.phone ?? null,
-    serviceName: booking.service?.name ?? '—',
-    vehicleNumber: booking.plateNumber ?? '—',
-    vehicleModel,
-    bookingDate: fmtDate(data.slotDate),
-    bookingTime: data.slotTime,
-    serviceAddress,
-    paymentMethod: paymentMethodLabel(data.paymentMethod),
-    paymentStatus: paymentStatusLabel(),
-    amount: fmtAmount(booking.totalAmount),
-    notes: data.notes ?? null,
-  };
-
-  const tasks = [sendBookingNotificationToAdmin(payload)];
-  if (user?.email) tasks.push(sendBookingConfirmationEmail(user.email, payload));
-  await Promise.allSettled(tasks);
-};
 
 // POST /customer/bookings
 const createBooking = async (req, res, next) => {
@@ -238,6 +200,12 @@ const createBooking = async (req, res, next) => {
         select: { vehicleTypeId: true },
       });
       if (carModel) resolvedVehicleTypeId = carModel.vehicleTypeId;
+    }
+
+    // Vehicle details are mandatory (plate number stays optional). A booking must
+    // resolve to a vehicle type — either picked directly or via the car model.
+    if (!resolvedVehicleTypeId) {
+      return res.status(400).json({ success: false, message: 'Vehicle details are required' });
     }
 
     // Pricing: ServicePricing[serviceId × vehicleTypeId] → service.price fallback
@@ -301,10 +269,9 @@ const createBooking = async (req, res, next) => {
     });
 
     res.status(201).json({ success: true, booking });
-
-    // Fire-and-forget notifications — email failures must not fail the booking.
-    sendBookingEmails(req.user.userId, booking, data).catch((err) =>
-      console.error('[booking email] failed:', err?.message));
+    // NOTE: booking confirmation emails are sent on successful payment
+    // (see payments.service.js), not at creation — a PENDING booking is just a
+    // temporary slot hold until Razorpay verifies / COD is placed.
   } catch (err) { next(err); }
 };
 

@@ -92,6 +92,7 @@ const sendBookingConfirmationEmail = async (to, b) => {
         ['Booking ID', b.bookingNumber],
         ['Service', b.serviceName],
         ['Vehicle', b.vehicleNumber],
+        ['Vehicle Details', b.vehicleModel],
         ['Date', b.bookingDate],
         ['Time', b.bookingTime],
         ['Service Address', b.serviceAddress],
@@ -259,6 +260,78 @@ const sendOrderNotificationToAdmin = async (o) => {
   });
 };
 
+// ── Membership emails ────────────────────────────────────
+
+// m: { membershipNumber, customerName, customerEmail, customerMobile, planName,
+//      washesPerYear, validity, paymentMethod, paymentStatus, amount }
+const sendMembershipConfirmationEmail = async (to, m) => {
+  const body = `
+    <div style="background:#fff;border-radius:8px;padding:20px;border:1px solid #e5e5e5;">
+      <h3 style="margin:0 0 8px;font-size:15px;color:#1a1a1a;">Membership Details</h3>
+      <table style="width:100%;border-collapse:collapse;">${detailRows([
+        ['Membership ID', m.membershipNumber],
+        ['Plan', m.planName],
+        ['Washes / Year', m.washesPerYear],
+        ['Validity', m.validity],
+        ['Payment Method', m.paymentMethod],
+        ['Payment Status', m.paymentStatus],
+        ['Amount', `₹${m.amount}`],
+      ])}</table>
+    </div>
+    <h3 style="margin:24px 0 8px;font-size:15px;color:#1a1a1a;">What's Next?</h3>
+    <ul style="color:#555;font-size:14px;line-height:1.7;margin:0;padding-left:20px;">
+      <li>Your membership is now active on your Car Magic Pro account.</li>
+      <li>Book any wash under your plan directly from the app or website.</li>
+      <li>We'll keep track of your remaining washes for the year.</li>
+      <li>Your invoice is available anytime in your account.</li>
+    </ul>
+    ${customerFooter()}`;
+
+  await client.sendMail({
+    from: { address: ZEPTO_FROM_EMAIL, name: ZEPTO_FROM_NAME },
+    to: [{ email_address: { address: to, name: m.customerName ?? 'Customer' } }],
+    subject: `✅ Your Car Magic Pro Membership is Active! | Membership #${m.membershipNumber}`,
+    htmlbody: wrap(
+      'Your Membership is Active!',
+      `Dear ${esc(m.customerName ?? 'Customer')}, thank you for becoming a Car Magic Pro member! Your plan is now active and ready to use.`,
+      body,
+    ),
+  });
+};
+
+const sendMembershipNotificationToAdmin = async (m) => {
+  if (!ADMIN_NOTIFY_EMAIL) return;
+  const body = `
+    <div style="background:#fff;border-radius:8px;padding:20px;border:1px solid #e5e5e5;margin-bottom:16px;">
+      <h3 style="margin:0 0 8px;font-size:15px;color:#1a1a1a;">Customer Details</h3>
+      <table style="width:100%;border-collapse:collapse;">${detailRows([
+        ['Customer Name', m.customerName],
+        ['Mobile Number', m.customerMobile],
+        ['Email Address', m.customerEmail],
+      ])}</table>
+    </div>
+    <div style="background:#fff;border-radius:8px;padding:20px;border:1px solid #e5e5e5;">
+      <h3 style="margin:0 0 8px;font-size:15px;color:#1a1a1a;">Membership Details</h3>
+      <table style="width:100%;border-collapse:collapse;">${detailRows([
+        ['Membership ID', m.membershipNumber],
+        ['Plan', m.planName],
+        ['Washes / Year', m.washesPerYear],
+        ['Validity', m.validity],
+        ['Payment Method', m.paymentMethod],
+        ['Payment Status', m.paymentStatus],
+        ['Total Amount', `₹${m.amount}`],
+      ])}</table>
+    </div>
+    <p style="color:#888;font-size:13px;margin:16px 0 0;">Please log in to the Admin Dashboard to view this membership.<br/>Car Magic Pro System</p>`;
+
+  await client.sendMail({
+    from: { address: ZEPTO_FROM_EMAIL, name: ZEPTO_FROM_NAME },
+    to: [{ email_address: { address: ADMIN_NOTIFY_EMAIL, name: 'Admin' } }],
+    subject: `⭐ New Membership Purchased | Membership #${m.membershipNumber}`,
+    htmlbody: wrap('New Membership Purchased', 'A new membership has been purchased through Car Magic Pro.', body),
+  });
+};
+
 module.exports = {
   sendOtpEmail,
   sendCustomerOtpEmail,
@@ -267,4 +340,6 @@ module.exports = {
   sendBookingNotificationToAdmin,
   sendOrderConfirmationEmail,
   sendOrderNotificationToAdmin,
+  sendMembershipConfirmationEmail,
+  sendMembershipNotificationToAdmin,
 };
