@@ -29,6 +29,7 @@ const getProfile = async (req, res, next) => {
 const updateProfileSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   phone: z.string().regex(/^[6-9]\d{9}$/).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
 });
 
 // PATCH /customer/me
@@ -41,7 +42,15 @@ const updateProfile = async (req, res, next) => {
       select: { id: true, name: true, email: true, phone: true, isVerified: true, createdAt: true },
     });
     res.json({ success: true, user });
-  } catch (err) { next(err); }
+  } catch (err) {
+    // email and phone are @unique — surface a friendly conflict instead of a 500.
+    if (err?.code === 'P2002') {
+      const target = Array.isArray(err.meta?.target) ? err.meta.target.join(',') : String(err.meta?.target ?? '');
+      const label = target.includes('email') ? 'Email' : target.includes('phone') ? 'Phone number' : 'Value';
+      return res.status(409).json({ success: false, message: `${label} is already in use by another account` });
+    }
+    next(err);
+  }
 };
 
 // GET /customer/bookings
