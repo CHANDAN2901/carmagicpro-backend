@@ -109,6 +109,25 @@ const sendBookingEmails = async (bookingId, { paymentMethod, paymentStatus, amou
   await Promise.allSettled(tasks);
 };
 
+// Idempotent, race-safe confirmation dispatch. Uses an atomic compare-and-set on
+// payments.confirmationSentAt: only the first caller flips it from null and sends,
+// so no matter how many times /verify fires — or which path (fresh capture vs the
+// already-captured early-return) reaches here — the customer + admin emails go out
+// exactly once. This is the single entry point for BOOKING/MEMBERSHIP confirmation
+// mail; ORDER mail is sent at order creation, not here.
+const sendConfirmationEmailsOnce = async (paymentId, { paymentMethod, paymentStatus }) => {
+  const claim = await prisma.payment.updateMany({
+    where: { id: paymentId, confirmationSentAt: null },
+    data: { confirmationSentAt: new Date() },
+  });
+  if (claim.count === 0) return; // another call already dispatched
+  const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+  if (!payment) return;
+  const info = { paymentMethod, paymentStatus, amount: payment.amount };
+  if (payment.entityType === 'BOOKING') await sendBookingEmails(payment.entityId, info);
+  else if (payment.entityType === 'MEMBERSHIP') await sendMembershipEmails(payment.entityId, info);
+};
+
 const getRazorpayMode = async () => {
   const setting = await prisma.appSetting.findUnique({ where: { key: 'razorpay_mode' } });
   return setting?.value ?? 'test';
@@ -307,18 +326,16 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     // Confirm entity immediately for COD
     if (entityType === 'BOOKING') {
       await prisma.booking.update({ where: { id: entityId }, data: { status: 'CONFIRMED' } });
-      sendBookingEmails(entityId, {
+      sendConfirmationEmailsOnce(payment.id, {
         paymentMethod: 'Cash on Delivery',
         paymentStatus: 'Pending (Cash on Delivery)',
-        amount: finalAmount,
-      }).catch((err) => console.error('[booking email] failed:', err?.message));
+      }).catch((err) => console.error('[confirmation email] failed:', err?.message));
     } else if (entityType === 'MEMBERSHIP') {
       await activateMembership(prisma, entityId);
-      sendMembershipEmails(entityId, {
+      sendConfirmationEmailsOnce(payment.id, {
         paymentMethod: 'Cash on Delivery',
         paymentStatus: 'Pending (Cash on Delivery)',
-        amount: finalAmount,
-      }).catch((err) => console.error('[membership email] failed:', err?.message));
+      }).catch((err) => console.error('[confirmation email] failed:', err?.message));
     } else {
       await prisma.order.update({ where: { id: entityId }, data: { status: 'CONFIRMED' } });
     }
@@ -382,7 +399,17 @@ const verifyPayment = async ({ razorpayOrderId, razorpayPaymentId, razorpaySigna
 
   const payment = await prisma.payment.findUnique({ where: { razorpayOrderId } });
   if (!payment) { const e = new Error('Payment not found'); e.statusCode = 404; throw e; }
-  if (payment.status === 'CAPTURED') return { alreadyCaptured: true };
+  if (payment.status === 'CAPTURED') {
+    // A prior /verify already captured this (the frontend fires /verify more than
+    // once). The confirmation email may not have gone out on that call, so trigger
+    // the idempotent dispatch again — the atomic claim guarantees it still sends
+    // at most once total.
+    if (payment.entityType === 'BOOKING' || payment.entityType === 'MEMBERSHIP') {
+      sendConfirmationEmailsOnce(payment.id, { paymentMethod: 'Online (Razorpay)', paymentStatus: 'Paid' })
+        .catch((err) => console.error('[confirmation email] failed:', err?.message));
+    }
+    return { alreadyCaptured: true };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.payment.update({
@@ -419,19 +446,12 @@ const verifyPayment = async ({ razorpayOrderId, razorpayPaymentId, razorpaySigna
     }
   });
 
-  // Fire-and-forget confirmation emails after the tx commits (status is persisted).
-  if (payment.entityType === 'MEMBERSHIP') {
-    sendMembershipEmails(payment.entityId, {
-      paymentMethod: 'Online (Razorpay)',
-      paymentStatus: 'Paid',
-      amount: payment.amount,
-    }).catch((err) => console.error('[membership email] failed:', err?.message));
-  } else if (payment.entityType === 'BOOKING') {
-    sendBookingEmails(payment.entityId, {
-      paymentMethod: 'Online (Razorpay)',
-      paymentStatus: 'Paid',
-      amount: payment.amount,
-    }).catch((err) => console.error('[booking email] failed:', err?.message));
+  // Fire-and-forget confirmation email after the tx commits. Idempotent + race-safe
+  // (see sendConfirmationEmailsOnce), so duplicate /verify calls can't double-send,
+  // and a send missed here is recovered by the already-captured early-return branch.
+  if (payment.entityType === 'BOOKING' || payment.entityType === 'MEMBERSHIP') {
+    sendConfirmationEmailsOnce(payment.id, { paymentMethod: 'Online (Razorpay)', paymentStatus: 'Paid' })
+      .catch((err) => console.error('[confirmation email] failed:', err?.message));
   }
 
   return { success: true };
