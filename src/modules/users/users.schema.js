@@ -3,7 +3,7 @@ const { z } = require('zod');
 const createUserSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(10).max(15).optional(),
-  email: z.string().email(),
+  email: z.string().email().optional(),
   isActive: z.boolean().optional(),
 });
 

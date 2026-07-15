@@ -26,6 +26,11 @@ const create = async (req, res, next) => {
     const user = await usersService.create(body);
     res.status(201).json({ success: true, user });
   } catch (err) {
+    if (err?.code === 'P2002') {
+      const target = Array.isArray(err.meta?.target) ? err.meta.target.join(',') : String(err.meta?.target ?? '');
+      const label = target.includes('email') ? 'Email' : target.includes('phone') ? 'Phone number' : 'Value';
+      return res.status(409).json({ success: false, message: `${label} is already in use by another account` });
+    }
     next(err);
   }
 };
