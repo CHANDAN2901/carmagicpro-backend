@@ -1,16 +1,27 @@
 const prisma = require('../../config/prisma');
 const { generateBookingNumber } = require('../../utils/entityNumber');
+const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
+const { createInvoice } = require('../payments/payments.service');
 
 const vehicleInclude = {
   vehicleType: { select: { id: true, name: true } },
   carModel: { select: { id: true, name: true, brand: { select: { name: true } } } },
 };
 
-const getAll = async ({ userId, status, page = 1, limit = 20 } = {}) => {
+const getAll = async ({ userId, status, search, page = 1, limit = 20 } = {}) => {
+  await releaseStaleBookings();
   const skip = (page - 1) * limit;
   const where = {};
   if (userId) where.userId = userId;
   if (status) where.status = status;
+  if (search) {
+    where.OR = [
+      { bookingNumber: { contains: search, mode: 'insensitive' } },
+      { plateNumber: { contains: search, mode: 'insensitive' } },
+      { user: { name: { contains: search, mode: 'insensitive' } } },
+      { user: { phone: { contains: search, mode: 'insensitive' } } },
+    ];
+  }
 
   const [bookings, total] = await Promise.all([
     prisma.booking.findMany({
@@ -49,7 +60,7 @@ const getById = async (id) => {
   const booking = await prisma.booking.findUnique({
     where: { id },
     include: {
-      user: { select: { id: true, name: true, phone: true } },
+      user: { select: { id: true, name: true, phone: true, email: true, address: true } },
       service: { select: { id: true, name: true, price: true, durationMins: true } },
       ...vehicleInclude,
     },
@@ -59,13 +70,53 @@ const getById = async (id) => {
 };
 
 const create = async (data) => {
+  const { paymentMethod, ...bookingData } = data;
   const bookingNumber = await generateBookingNumber();
-  return prisma.booking.create({
-    data: { ...data, bookingNumber, scheduledAt: new Date(data.scheduledAt) },
-    include: {
-      user: { select: { id: true, name: true, phone: true } },
-      service: { select: { id: true, name: true } },
-    },
+  const bookingInclude = {
+    user: { select: { id: true, name: true, phone: true } },
+    service: { select: { id: true, name: true } },
+  };
+
+  // Admin manual entry: payment already collected in person (cash/card swipe),
+  // so the booking is confirmed immediately and a matching Payment + Invoice
+  // are created in the same transaction — no Razorpay/COD flow involved.
+  if (!paymentMethod) {
+    return prisma.booking.create({
+      data: { ...bookingData, bookingNumber, scheduledAt: new Date(bookingData.scheduledAt) },
+      include: bookingInclude,
+    });
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.create({
+      data: {
+        ...bookingData,
+        bookingNumber,
+        scheduledAt: new Date(bookingData.scheduledAt),
+        status: 'CONFIRMED',
+      },
+      include: bookingInclude,
+    });
+
+    const payment = await tx.payment.create({
+      data: {
+        entityType: 'BOOKING',
+        entityId: booking.id,
+        userId: booking.userId,
+        provider: 'MANUAL',
+        status: 'CAPTURED',
+        method: paymentMethod,
+        grossAmount: booking.totalAmount,
+        amount: booking.totalAmount,
+        capturedAt: new Date(),
+      },
+    });
+    await tx.paymentLog.create({
+      data: { paymentId: payment.id, toStatus: 'CAPTURED', trigger: 'ADMIN:manual_booking' },
+    });
+    await createInvoice(tx, payment);
+
+    return booking;
   });
 };
 

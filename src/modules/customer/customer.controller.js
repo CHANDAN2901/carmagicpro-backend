@@ -53,6 +53,19 @@ const updateProfile = async (req, res, next) => {
   }
 };
 
+// PATCH /customer/bookings/:id/cancel
+// Called when the customer dismisses/aborts the Razorpay checkout so the slot
+// hold releases immediately instead of waiting on the lazy releaseStaleBookings sweep.
+const cancelBooking = async (req, res, next) => {
+  try {
+    const { count } = await prisma.booking.updateMany({
+      where: { id: req.params.id, userId: req.user.userId, status: 'PENDING' },
+      data: { status: 'CANCELLED' },
+    });
+    res.json({ success: true, cancelled: count > 0 });
+  } catch (err) { next(err); }
+};
+
 // GET /customer/bookings
 const getMyBookings = async (req, res, next) => {
   try {
@@ -429,4 +442,4 @@ const sendOrderEmails = async (userId, order, data) => {
   await Promise.allSettled(tasks);
 };
 
-module.exports = { getProfile, updateProfile, getMyBookings, getMyOrders, getMyVehicles, addVehicle, deleteVehicle, createBooking, createOrder };
+module.exports = { getProfile, updateProfile, getMyBookings, getMyOrders, getMyVehicles, addVehicle, deleteVehicle, createBooking, createOrder, cancelBooking };

@@ -137,6 +137,7 @@ model VehicleType {
   vehicles           Vehicle[]
   carModels          CarModel[]
   bookings           Booking[]
+  memberships        Membership[]
   defaultForServices Service[]        @relation("ServiceDefaultVehicleType")
 
   @@map("vehicle_types")
@@ -177,10 +178,11 @@ model CarModel {
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
 
-  brand       CarBrand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
-  vehicleType VehicleType @relation(fields: [vehicleTypeId], references: [id])
+  brand       CarBrand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  vehicleType VehicleType  @relation(fields: [vehicleTypeId], references: [id])
   vehicles    Vehicle[]
   bookings    Booking[]
+  memberships Membership[]
 
   @@unique([brandId, name])
   @@index([brandId])
@@ -447,12 +449,19 @@ model Membership {
   washesPerYear    Int              @map("washes_per_year")
   price            Decimal          @db.Decimal(10, 2)
   status           MembershipStatus @default(PENDING)
+  vehicleTypeId    String?          @map("vehicle_type_id")
+  carModelId       String?          @map("car_model_id")
+  fuelType         FuelType?        @map("fuel_type")
+  plateNumber      String?          @map("plate_number")
+  address          String?
   startDate        DateTime?        @map("start_date")
   expiresAt        DateTime?        @map("expires_at")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
-  user User @relation(fields: [userId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  vehicleType VehicleType? @relation(fields: [vehicleTypeId], references: [id])
+  carModel    CarModel?    @relation(fields: [carModelId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([status])
@@ -485,6 +494,7 @@ enum PaymentMethod {
   NETBANKING
   WALLET
   COD
+  CASH
   OTHER
 }
 

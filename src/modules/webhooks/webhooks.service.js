@@ -121,19 +121,40 @@ const handlePaymentFailed = async (event) => {
   const payment = await prisma.payment.findUnique({ where: { razorpayOrderId: entity.order_id } });
   if (!payment || payment.status === 'FAILED') return;
 
-  await prisma.payment.update({
-    where: { id: payment.id },
-    data: { status: 'FAILED', failureReason: entity.error_description },
-  });
+  await prisma.$transaction(async (tx) => {
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: { status: 'FAILED', failureReason: entity.error_description },
+    });
 
-  await prisma.paymentLog.create({
-    data: {
-      paymentId: payment.id,
-      fromStatus: payment.status,
-      toStatus: 'FAILED',
-      trigger: 'WEBHOOK:payment.failed',
-      metadata: { error: entity.error_description, code: entity.error_code },
-    },
+    await tx.paymentLog.create({
+      data: {
+        paymentId: payment.id,
+        fromStatus: payment.status,
+        toStatus: 'FAILED',
+        trigger: 'WEBHOOK:payment.failed',
+        metadata: { error: entity.error_description, code: entity.error_code },
+      },
+    });
+
+    // A failed payment means the pending slot hold should release immediately
+    // instead of waiting on the lazy releaseStaleBookings sweep.
+    if (payment.entityType === 'BOOKING') {
+      await tx.booking.updateMany({
+        where: { id: payment.entityId, status: 'PENDING' },
+        data: { status: 'CANCELLED' },
+      });
+    } else if (payment.entityType === 'ORDER') {
+      await tx.order.updateMany({
+        where: { id: payment.entityId, status: 'PENDING' },
+        data: { status: 'CANCELLED' },
+      });
+    } else if (payment.entityType === 'MEMBERSHIP') {
+      await tx.membership.updateMany({
+        where: { id: payment.entityId, status: 'PENDING' },
+        data: { status: 'CANCELLED' },
+      });
+    }
   });
 };
 

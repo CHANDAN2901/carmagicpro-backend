@@ -1,6 +1,12 @@
 const prisma = require('../../config/prisma');
 const { generateEntityNumber } = require('../../utils/entityNumber');
 const { getPlan } = require('./memberships.plans');
+const { createInvoice } = require('../payments/payments.service');
+
+const vehicleInclude = {
+  vehicleType: { select: { id: true, name: true } },
+  carModel: { select: { id: true, name: true, brand: { select: { name: true } } } },
+};
 
 // Attaches the related payment + invoice to a set of memberships. Memberships are
 // paid for through the shared Payment engine (entityType MEMBERSHIP, entityId =
@@ -21,7 +27,7 @@ const attachPayments = async (memberships) => {
 
 // Customer: create a PENDING membership snapshotting the chosen static plan.
 // Activation (ACTIVE + expiry) happens later, on successful payment.
-const create = async ({ userId, planKey }) => {
+const create = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, plateNumber, address }) => {
   const plan = getPlan(planKey);
   if (!plan) throw Object.assign(new Error('Invalid plan'), { statusCode: 400 });
 
@@ -35,7 +41,66 @@ const create = async ({ userId, planKey }) => {
       washesPerYear: plan.washesPerYear,
       price: plan.price,
       status: 'PENDING',
+      vehicleTypeId,
+      carModelId: carModelId ?? null,
+      fuelType: fuelType ?? null,
+      plateNumber: plateNumber ?? null,
+      address,
     },
+  });
+};
+
+// Admin: manual entry for a membership paid in person (cash/card swipe).
+// Activates immediately and creates a matching MANUAL/CAPTURED Payment + Invoice,
+// mirroring bookings.service.create's manual path — no Razorpay/COD flow involved.
+const createManual = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, plateNumber, address, paymentMethod }) => {
+  const plan = getPlan(planKey);
+  if (!plan) throw Object.assign(new Error('Invalid plan'), { statusCode: 400 });
+
+  const membershipNumber = await generateEntityNumber('MEMBERSHIP');
+  const startDate = new Date();
+  const expiresAt = new Date(startDate);
+  expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+
+  return prisma.$transaction(async (tx) => {
+    const membership = await tx.membership.create({
+      data: {
+        membershipNumber,
+        userId,
+        planKey: plan.planKey,
+        planName: plan.name,
+        washesPerYear: plan.washesPerYear,
+        price: plan.price,
+        status: 'ACTIVE',
+        startDate,
+        expiresAt,
+        vehicleTypeId: vehicleTypeId ?? null,
+        carModelId: carModelId ?? null,
+        fuelType: fuelType ?? null,
+        plateNumber: plateNumber ?? null,
+        address: address ?? null,
+      },
+    });
+
+    const payment = await tx.payment.create({
+      data: {
+        entityType: 'MEMBERSHIP',
+        entityId: membership.id,
+        userId,
+        provider: 'MANUAL',
+        status: 'CAPTURED',
+        method: paymentMethod,
+        grossAmount: membership.price,
+        amount: membership.price,
+        capturedAt: new Date(),
+      },
+    });
+    await tx.paymentLog.create({
+      data: { paymentId: payment.id, toStatus: 'CAPTURED', trigger: 'ADMIN:manual_membership' },
+    });
+    await createInvoice(tx, payment);
+
+    return membership;
   });
 };
 
@@ -60,7 +125,7 @@ const getAll = async ({ userId, status, page = 1, limit = 20 } = {}) => {
       where,
       skip,
       take: limit,
-      include: { user: { select: { id: true, name: true, phone: true, email: true } } },
+      include: { user: { select: { id: true, name: true, phone: true, email: true } }, ...vehicleInclude },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.membership.count({ where }),
@@ -72,7 +137,7 @@ const getAll = async ({ userId, status, page = 1, limit = 20 } = {}) => {
 const getById = async (id) => {
   const membership = await prisma.membership.findUnique({
     where: { id },
-    include: { user: { select: { id: true, name: true, phone: true, email: true } } },
+    include: { user: { select: { id: true, name: true, phone: true, email: true, address: true } }, ...vehicleInclude },
   });
   if (!membership) throw Object.assign(new Error('Membership not found'), { statusCode: 404 });
   const [withPayment] = await attachPayments([membership]);
@@ -88,4 +153,4 @@ const getForExport = async ({ gte, lte }) => {
   });
 };
 
-module.exports = { create, getMine, getAll, getById, getForExport };
+module.exports = { create, createManual, getMine, getAll, getById, getForExport };

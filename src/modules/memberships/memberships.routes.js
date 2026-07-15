@@ -12,5 +12,6 @@ router.use(authenticate);
 router.get('/', controller.getAll);
 router.get('/export', controller.exportExcel); // must precede '/:id'
 router.get('/:id', controller.getById);
+router.post('/', controller.createManual);
 
 module.exports = router;

@@ -11,6 +11,7 @@ router.get('/me', ctrl.getProfile);
 router.patch('/me', ctrl.updateProfile);
 router.get('/bookings', ctrl.getMyBookings);
 router.post('/bookings', ctrl.createBooking);
+router.patch('/bookings/:id/cancel', ctrl.cancelBooking);
 router.get('/orders', ctrl.getMyOrders);
 router.post('/orders', ctrl.createOrder);
 router.get('/memberships', membershipsCtrl.getMine);

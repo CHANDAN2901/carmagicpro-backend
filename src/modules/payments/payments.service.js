@@ -43,9 +43,14 @@ const sendMembershipEmails = async (membershipId, { paymentMethod, paymentStatus
     amount: Number(amount ?? membership.price).toFixed(2),
   };
 
-  const tasks = [sendMembershipNotificationToAdmin(payload)];
-  if (membership.user?.email) tasks.push(sendMembershipConfirmationEmail(membership.user.email, payload));
-  await Promise.allSettled(tasks);
+  const tasks = [
+    ['admin', sendMembershipNotificationToAdmin(payload)],
+  ];
+  if (membership.user?.email) tasks.push(['customer', sendMembershipConfirmationEmail(membership.user.email, payload)]);
+  const results = await Promise.allSettled(tasks.map(([, p]) => p));
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') console.error(`[membership email] ${tasks[i][0]} send failed:`, r.reason?.message ?? r.reason);
+  });
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -104,9 +109,14 @@ const sendBookingEmails = async (bookingId, { paymentMethod, paymentStatus, amou
     notes: customerNotes,
   };
 
-  const tasks = [sendBookingNotificationToAdmin(payload)];
-  if (booking.user?.email) tasks.push(sendBookingConfirmationEmail(booking.user.email, payload));
-  await Promise.allSettled(tasks);
+  const tasks = [
+    ['admin', sendBookingNotificationToAdmin(payload)],
+  ];
+  if (booking.user?.email) tasks.push(['customer', sendBookingConfirmationEmail(booking.user.email, payload)]);
+  const results = await Promise.allSettled(tasks.map(([, p]) => p));
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') console.error(`[booking email] ${tasks[i][0]} send failed:`, r.reason?.message ?? r.reason);
+  });
 };
 
 // Idempotent, race-safe confirmation dispatch. Uses an atomic compare-and-set on
@@ -573,4 +583,4 @@ const initiateRefund = async (id, { amount, reason }) => {
   return refund;
 };
 
-module.exports = { createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund };
+module.exports = { createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, createInvoice };

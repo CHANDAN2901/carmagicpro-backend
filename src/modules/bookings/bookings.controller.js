@@ -52,8 +52,8 @@ const exportExcel = async (req, res, next) => {
 
 const getAll = async (req, res, next) => {
   try {
-    const { userId, status, page, limit } = listBookingsQuerySchema.parse(req.query);
-    const result = await bookingsService.getAll({ userId, status, page, limit });
+    const { userId, status, search, page, limit } = listBookingsQuerySchema.parse(req.query);
+    const result = await bookingsService.getAll({ userId, status, search, page, limit });
     res.json({ success: true, ...result });
   } catch (err) {
     next(err);

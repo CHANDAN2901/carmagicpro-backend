@@ -6,6 +6,12 @@ const createBookingSchema = z.object({
   scheduledAt: z.string().datetime(),
   notes: z.string().optional(),
   totalAmount: z.number().positive(),
+  vehicleTypeId: z.string().optional(),
+  carModelId: z.string().optional(),
+  fuelType: z.string().optional(),
+  plateNumber: z.string().optional(),
+  // Admin manual entry only: payment already collected in person.
+  paymentMethod: z.enum(['CASH', 'CARD']).optional(),
 });
 
 const updateBookingSchema = z.object({
@@ -17,6 +23,7 @@ const updateBookingSchema = z.object({
 const listBookingsQuerySchema = z.object({
   userId: z.string().max(50).optional(),
   status: z.enum(['PENDING', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']).optional(),
+  search: z.string().max(100).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
 });

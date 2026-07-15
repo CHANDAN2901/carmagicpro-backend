@@ -1,5 +1,5 @@
 const membershipsService = require('./memberships.service');
-const { createMembershipSchema, listMembershipsQuerySchema } = require('./memberships.schema');
+const { createMembershipSchema, createMembershipAdminSchema, listMembershipsQuerySchema } = require('./memberships.schema');
 const { PLANS } = require('./memberships.plans');
 const { parseDateRange, buildWorkbook, sendWorkbook } = require('../../utils/excel');
 
@@ -13,8 +13,8 @@ const getPlans = async (_req, res) => {
 // Customer: create a PENDING membership for the logged-in user.
 const createForCustomer = async (req, res, next) => {
   try {
-    const { planKey } = createMembershipSchema.parse(req.body);
-    const membership = await membershipsService.create({ userId: req.user.userId, planKey });
+    const body = createMembershipSchema.parse(req.body);
+    const membership = await membershipsService.create({ userId: req.user.userId, ...body });
     res.status(201).json({ success: true, membership });
   } catch (err) { next(err); }
 };
@@ -24,6 +24,15 @@ const getMine = async (req, res, next) => {
   try {
     const memberships = await membershipsService.getMine(req.user.userId);
     res.json({ success: true, memberships });
+  } catch (err) { next(err); }
+};
+
+// Admin: manual entry for a membership paid in person (cash/card swipe).
+const createManual = async (req, res, next) => {
+  try {
+    const body = createMembershipAdminSchema.parse(req.body);
+    const membership = await membershipsService.createManual(body);
+    res.status(201).json({ success: true, membership });
   } catch (err) { next(err); }
 };
 
@@ -82,4 +91,4 @@ const exportExcel = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { getPlans, createForCustomer, getMine, getAll, getById, exportExcel };
+module.exports = { getPlans, createForCustomer, createManual, getMine, getAll, getById, exportExcel };
