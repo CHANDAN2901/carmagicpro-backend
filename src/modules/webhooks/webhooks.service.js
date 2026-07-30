@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { getEnv } = require('../../config/env');
+const couponsService = require('../coupons/coupons.service');
 
 const prisma = new PrismaClient();
 
@@ -78,13 +79,13 @@ const handlePaymentCaptured = async (event) => {
 
     if (payment.couponId) {
       const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { phone: true } });
-      if (user) {
-        await tx.couponUsage.upsert({
-          where: { couponId_userPhone: { couponId: payment.couponId, userPhone: user.phone } },
-          update: {},
-          create: { couponId: payment.couponId, userPhone: user.phone },
-        });
-        await tx.coupon.update({ where: { id: payment.couponId }, data: { usedCount: { increment: 1 } } });
+      let plateNumber;
+      if (payment.entityType === 'BOOKING') {
+        const booking = await tx.booking.findUnique({ where: { id: payment.entityId }, select: { plateNumber: true } });
+        plateNumber = booking?.plateNumber;
+      }
+      if (user?.phone) {
+        await couponsService.recordUsage(tx, { couponId: payment.couponId, userPhone: user.phone, plateNumber });
       }
     }
 

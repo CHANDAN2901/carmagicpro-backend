@@ -34,7 +34,26 @@ const remove = async (id) => {
   return prisma.coupon.delete({ where: { id } });
 };
 
-const apply = async ({ code, amount, userPhone }) => {
+const normalizePlate = (plateNumber) => (plateNumber ? plateNumber.toUpperCase().trim() : null);
+
+// Vehicle-plate takes priority when present (a booking has a specific vehicle);
+// falls back to phone-based tracking for plate-less bookings/memberships.
+const findUsage = async (couponId, userPhone, plateNumber) => {
+  const plate = normalizePlate(plateNumber);
+  if (plate) {
+    return prisma.couponUsage.findUnique({ where: { couponId_plateNumber: { couponId, plateNumber: plate } } });
+  }
+  return prisma.couponUsage.findUnique({ where: { couponId_userPhone: { couponId, userPhone } } });
+};
+
+const assertNotUsed = async ({ couponId, userPhone, plateNumber }) => {
+  const usage = await findUsage(couponId, userPhone, plateNumber);
+  if (usage) {
+    throw Object.assign(new Error('You have already used this coupon'), { statusCode: 400 });
+  }
+};
+
+const apply = async ({ code, amount, userPhone, plateNumber }) => {
   const coupon = await prisma.coupon.findUnique({ where: { code: code.toUpperCase() } });
 
   if (!coupon || !coupon.isActive) {
@@ -61,12 +80,7 @@ const apply = async ({ code, amount, userPhone }) => {
     throw Object.assign(new Error(`Minimum order amount is ₹${coupon.minOrderAmount}`), { statusCode: 400 });
   }
 
-  const usage = await prisma.couponUsage.findUnique({
-    where: { couponId_userPhone: { couponId: coupon.id, userPhone } },
-  });
-  if (usage) {
-    throw Object.assign(new Error('You have already used this coupon'), { statusCode: 400 });
-  }
+  await assertNotUsed({ couponId: coupon.id, userPhone, plateNumber });
 
   let discount;
   if (coupon.type === 'FLAT') {
@@ -86,12 +100,19 @@ const apply = async ({ code, amount, userPhone }) => {
   };
 };
 
-// Call this when booking is confirmed to record usage
-const recordUsage = async (couponId, userPhone) => {
-  await prisma.$transaction([
-    prisma.couponUsage.create({ data: { couponId, userPhone } }),
-    prisma.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } }),
-  ]);
+// Call this when payment is captured to record usage. Upserts so retried
+// captures (webhook + verify racing) don't fail on the unique constraint.
+const recordUsage = async (tx, { couponId, userPhone, plateNumber }) => {
+  const plate = normalizePlate(plateNumber);
+  const where = plate
+    ? { couponId_plateNumber: { couponId, plateNumber: plate } }
+    : { couponId_userPhone: { couponId, userPhone } };
+  await tx.couponUsage.upsert({
+    where,
+    update: {},
+    create: { couponId, userPhone, plateNumber: plate },
+  });
+  await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } });
 };
 
 const bulkRemove = async (ids) => {
@@ -103,4 +124,4 @@ const bulkRemove = async (ids) => {
   return { deleted, failed }
 }
 
-module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, recordUsage };
+module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage };

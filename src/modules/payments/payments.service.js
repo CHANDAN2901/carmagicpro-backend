@@ -7,6 +7,7 @@ const {
   sendBookingConfirmationEmail,
   sendBookingNotificationToAdmin,
 } = require('../../utils/mailer');
+const couponsService = require('../coupons/coupons.service');
 
 const prisma = new PrismaClient();
 
@@ -271,10 +272,12 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
 
   // Fetch entity amount
   let grossAmount;
+  let plateNumber;
   if (entityType === 'BOOKING') {
-    const booking = await prisma.booking.findUnique({ where: { id: entityId }, select: { totalAmount: true } });
+    const booking = await prisma.booking.findUnique({ where: { id: entityId }, select: { totalAmount: true, plateNumber: true } });
     if (!booking) { const e = new Error('Booking not found'); e.statusCode = 404; throw e; }
     grossAmount = Number(booking.totalAmount);
+    plateNumber = booking.plateNumber;
   } else if (entityType === 'MEMBERSHIP') {
     const membership = await prisma.membership.findUnique({ where: { id: entityId }, select: { price: true } });
     if (!membership) { const e = new Error('Membership not found'); e.statusCode = 404; throw e; }
@@ -293,6 +296,12 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
   if (couponCode) {
     const coupon = await prisma.coupon.findUnique({ where: { code: couponCode.toUpperCase() } });
     if (coupon && coupon.isActive) {
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
+      await couponsService.assertNotUsed({
+        couponId: coupon.id,
+        userPhone: user?.phone,
+        plateNumber: entityType === 'BOOKING' ? plateNumber : undefined,
+      });
       if (coupon.type === 'FLAT') {
         discountAmount = Math.min(Number(coupon.value), grossAmount);
       } else {
@@ -437,13 +446,13 @@ const verifyPayment = async ({ razorpayOrderId, razorpayPaymentId, razorpaySigna
     });
     if (payment.couponId) {
       const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { phone: true } });
+      let plateNumber;
+      if (payment.entityType === 'BOOKING') {
+        const booking = await tx.booking.findUnique({ where: { id: payment.entityId }, select: { plateNumber: true } });
+        plateNumber = booking?.plateNumber;
+      }
       if (user?.phone) {
-        await tx.couponUsage.upsert({
-          where: { couponId_userPhone: { couponId: payment.couponId, userPhone: user.phone } },
-          update: {},
-          create: { couponId: payment.couponId, userPhone: user.phone },
-        });
-        await tx.coupon.update({ where: { id: payment.couponId }, data: { usedCount: { increment: 1 } } });
+        await couponsService.recordUsage(tx, { couponId: payment.couponId, userPhone: user.phone, plateNumber });
       }
     }
     await createInvoice(tx, payment);
@@ -537,13 +546,13 @@ const codCollect = async (id) => {
     });
     if (payment.couponId) {
       const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { phone: true } });
+      let plateNumber;
+      if (payment.entityType === 'BOOKING') {
+        const booking = await tx.booking.findUnique({ where: { id: payment.entityId }, select: { plateNumber: true } });
+        plateNumber = booking?.plateNumber;
+      }
       if (user?.phone) {
-        await tx.couponUsage.upsert({
-          where: { couponId_userPhone: { couponId: payment.couponId, userPhone: user.phone } },
-          update: {},
-          create: { couponId: payment.couponId, userPhone: user.phone },
-        });
-        await tx.coupon.update({ where: { id: payment.couponId }, data: { usedCount: { increment: 1 } } });
+        await couponsService.recordUsage(tx, { couponId: payment.couponId, userPhone: user.phone, plateNumber });
       }
     }
     invoice = await createInvoice(tx, { ...payment, status: 'CAPTURED' });

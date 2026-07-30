@@ -28,6 +28,7 @@ const applyCouponSchema = z.object({
   code: z.string().min(1),
   amount: z.number().positive(),
   userPhone: z.string().min(1),
+  plateNumber: z.string().optional(),
 });
 
 module.exports = { createCouponSchema, updateCouponSchema, applyCouponSchema };

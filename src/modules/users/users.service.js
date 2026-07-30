@@ -63,6 +63,7 @@ const remove = async (id) => {
     await tryDelete(() => tx.invoice.deleteMany({ where: { userId: id } }));
     await tryDelete(() => tx.payment.deleteMany({ where: { userId: id } }));
     await tryDelete(() => tx.order.deleteMany({ where: { userId: id } }));
+    await tryDelete(() => tx.membership.deleteMany({ where: { userId: id } }));
     if (user.phone) await tryDelete(() => tx.couponUsage.deleteMany({ where: { userPhone: user.phone } }));
     await tx.user.delete({ where: { id } });
   });

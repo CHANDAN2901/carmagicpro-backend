@@ -19,8 +19,8 @@ const getStats = async () => {
     prisma.order.count({ where: { createdAt: { lt: startOfMonth } } }),
     prisma.booking.count(),
     prisma.booking.count({ where: { createdAt: { lt: startOfMonth } } }),
-    prisma.order.aggregate({ _sum: { totalAmount: true } }),
-    prisma.order.aggregate({ _sum: { totalAmount: true }, where: { createdAt: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
+    prisma.payment.aggregate({ _sum: { amount: true }, where: { status: 'CAPTURED' } }),
+    prisma.payment.aggregate({ _sum: { amount: true }, where: { status: 'CAPTURED', createdAt: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
     prisma.order.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
@@ -41,8 +41,10 @@ const getStats = async () => {
     return Math.round(((curr - prev) / prev) * 100);
   };
 
-  const totalRevenue = Number(revenueResult._sum.totalAmount ?? 0);
-  const lastMonthRevenue = Number(revenueLastMonthResult._sum.totalAmount ?? 0);
+  const totalRevenue = Number(revenueResult._sum.amount ?? 0);
+  const lastMonthRevenue = Number(revenueLastMonthResult._sum.amount ?? 0);
+
+  const revenueByMembership = await getMembershipRevenue();
 
   return {
     stats: {
@@ -51,9 +53,38 @@ const getStats = async () => {
       totalBookings: { value: totalBookings, change: pct(totalBookings, bookingsLastMonth) },
       totalRevenue: { value: totalRevenue, change: pct(totalRevenue, lastMonthRevenue) },
     },
+    revenueByMembership,
     recentOrders,
     recentBookings,
   };
+};
+
+// Revenue actually collected (CAPTURED payments) per membership plan.
+const getMembershipRevenue = async () => {
+  const grouped = await prisma.payment.groupBy({
+    by: ['entityId'],
+    where: { entityType: 'MEMBERSHIP', status: 'CAPTURED' },
+    _sum: { amount: true },
+  });
+  if (!grouped.length) return [];
+
+  const memberships = await prisma.membership.findMany({
+    where: { id: { in: grouped.map((g) => g.entityId) } },
+    select: { id: true, planKey: true, planName: true },
+  });
+  const planById = new Map(memberships.map((m) => [m.id, m]));
+
+  const byPlan = new Map();
+  for (const g of grouped) {
+    const plan = planById.get(g.entityId);
+    if (!plan) continue;
+    const revenue = Number(g._sum.amount ?? 0);
+    const entry = byPlan.get(plan.planKey) ?? { planKey: plan.planKey, planName: plan.planName, revenue: 0, count: 0 };
+    entry.revenue += revenue;
+    entry.count += 1;
+    byPlan.set(plan.planKey, entry);
+  }
+  return Array.from(byPlan.values()).sort((a, b) => b.revenue - a.revenue);
 };
 
 // ─── Trends ─────────────────────────────────────────────────────────────────

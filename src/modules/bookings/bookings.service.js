@@ -8,7 +8,7 @@ const vehicleInclude = {
   carModel: { select: { id: true, name: true, brand: { select: { name: true } } } },
 };
 
-const getAll = async ({ userId, status, search, page = 1, limit = 20 } = {}) => {
+const getAll = async ({ userId, status, search, sortBy = 'scheduledAt', sortOrder = 'desc', page = 1, limit = 20 } = {}) => {
   await releaseStaleBookings();
   const skip = (page - 1) * limit;
   const where = {};
@@ -33,7 +33,7 @@ const getAll = async ({ userId, status, search, page = 1, limit = 20 } = {}) => 
         service: { select: { id: true, name: true } },
         ...vehicleInclude,
       },
-      orderBy: { scheduledAt: 'desc' },
+      orderBy: { [sortBy]: sortOrder },
     }),
     prisma.booking.count({ where }),
   ]);

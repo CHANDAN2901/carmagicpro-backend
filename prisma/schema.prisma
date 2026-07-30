@@ -370,14 +370,16 @@ model Coupon {
 }
 
 model CouponUsage {
-  id        String   @id @default(cuid())
-  couponId  String   @map("coupon_id")
-  userPhone String   @map("user_phone")
-  usedAt    DateTime @default(now()) @map("used_at")
+  id          String   @id @default(cuid())
+  couponId    String   @map("coupon_id")
+  userPhone   String   @map("user_phone")
+  plateNumber String?  @map("plate_number")
+  usedAt      DateTime @default(now()) @map("used_at")
 
   coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
 
   @@unique([couponId, userPhone])
+  @@unique([couponId, plateNumber])
   @@map("coupon_usages")
 }
 
