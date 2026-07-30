@@ -16,6 +16,7 @@ router.get('/orders', ctrl.getMyOrders);
 router.post('/orders', ctrl.createOrder);
 router.get('/memberships', membershipsCtrl.getMine);
 router.post('/memberships', membershipsCtrl.createForCustomer);
+router.patch('/memberships/:id/cancel', membershipsCtrl.cancel);
 router.get('/vehicles', ctrl.getMyVehicles);
 router.post('/vehicles', ctrl.addVehicle);
 router.delete('/vehicles/:id', ctrl.deleteVehicle);

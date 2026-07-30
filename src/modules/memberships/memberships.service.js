@@ -153,4 +153,13 @@ const getForExport = async ({ gte, lte }) => {
   });
 };
 
-module.exports = { create, createManual, getMine, getAll, getById, getForExport };
+// Customer: cancel a still-PENDING membership (e.g. Razorpay checkout dismissed).
+const cancel = async (id, userId) => {
+  const { count } = await prisma.membership.updateMany({
+    where: { id, userId, status: 'PENDING' },
+    data: { status: 'CANCELLED' },
+  });
+  return count > 0;
+};
+
+module.exports = { create, createManual, getMine, getAll, getById, getForExport, cancel };

@@ -27,6 +27,16 @@ const getMine = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// Customer: cancel a PENDING membership so the checkout can be retried cleanly.
+// Called when the customer dismisses/aborts the Razorpay checkout, mirroring
+// bookings' cancel-on-dismiss behaviour.
+const cancel = async (req, res, next) => {
+  try {
+    const cancelled = await membershipsService.cancel(req.params.id, req.user.userId);
+    res.json({ success: true, cancelled });
+  } catch (err) { next(err); }
+};
+
 // Admin: manual entry for a membership paid in person (cash/card swipe).
 const createManual = async (req, res, next) => {
   try {
@@ -91,4 +101,4 @@ const exportExcel = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { getPlans, createForCustomer, createManual, getMine, getAll, getById, exportExcel };
+module.exports = { getPlans, createForCustomer, cancel, createManual, getMine, getAll, getById, exportExcel };
