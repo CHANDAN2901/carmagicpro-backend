@@ -19,6 +19,8 @@ const updateBookingSchema = z.object({
   status: z.enum(['PENDING', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']).optional(),
   scheduledAt: z.string().datetime().optional(),
   notes: z.string().optional(),
+  beforeImages: z.array(z.string()).max(10).optional(),
+  afterImages: z.array(z.string()).max(10).optional(),
 });
 
 const listBookingsQuerySchema = z.object({

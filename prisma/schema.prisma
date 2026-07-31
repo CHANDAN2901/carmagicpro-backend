@@ -303,6 +303,8 @@ model Booking {
   scheduledAt   DateTime      @map("scheduled_at")
   notes         String?
   totalAmount   Decimal       @map("total_amount") @db.Decimal(10, 2)
+  beforeImages  String[]      @default([]) @map("before_images")
+  afterImages   String[]      @default([]) @map("after_images")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
