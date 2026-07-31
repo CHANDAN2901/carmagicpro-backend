@@ -209,7 +209,10 @@ const createBooking = async (req, res, next) => {
     const service = await prisma.service.findUnique({ where: { id: data.serviceId } });
     if (!service) return res.status(404).json({ success: false, message: 'Service not found' });
 
-    const scheduledAt = new Date(`${data.slotDate}T${data.slotTime}:00`);
+    // Customer picks date/time in IST; append the offset explicitly so this
+    // parses as IST regardless of the server process's own timezone (UTC on
+    // the VPS), instead of silently shifting by +5:30.
+    const scheduledAt = new Date(`${data.slotDate}T${data.slotTime}:00+05:30`);
     if (isNaN(scheduledAt.getTime())) {
       return res.status(400).json({ success: false, message: 'Invalid date or time' });
     }

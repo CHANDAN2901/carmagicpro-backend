@@ -13,9 +13,16 @@ const prisma = new PrismaClient();
 
 const fmtDate = (d) => {
   try {
-    return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
   } catch { return String(d ?? ''); }
 };
+
+// Server process may run in UTC (VPS), so render booking times explicitly in
+// IST rather than relying on getHours()/getMinutes(), which use the process's
+// local timezone and would silently disagree with the customer's selection.
+const fmtTimeIST = (d) => new Date(d).toLocaleTimeString('en-IN', {
+  timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
+});
 
 // Fire-and-forget: notify customer + admin that a membership is now active.
 // Called after activateMembership so startDate/expiresAt are set. paymentMethod
@@ -53,8 +60,6 @@ const sendMembershipEmails = async (membershipId, { paymentMethod, paymentStatus
     if (r.status === 'rejected') console.error(`[membership email] ${tasks[i][0]} send failed:`, r.reason?.message ?? r.reason);
   });
 };
-
-const pad2 = (n) => String(n).padStart(2, '0');
 
 // The booking's address / home-pickup flag / customer note are flattened into the
 // `notes` column at creation (see customer.controller.createBooking). Un-flatten
@@ -102,7 +107,7 @@ const sendBookingEmails = async (bookingId, { paymentMethod, paymentStatus, amou
     vehicleNumber: booking.plateNumber ?? '—',
     vehicleModel,
     bookingDate: fmtDate(scheduled),
-    bookingTime: `${pad2(scheduled.getHours())}:${pad2(scheduled.getMinutes())}`,
+    bookingTime: fmtTimeIST(scheduled),
     serviceAddress,
     paymentMethod,
     paymentStatus,
