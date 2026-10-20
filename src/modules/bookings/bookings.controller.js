@@ -21,6 +21,7 @@ const exportExcel = async (req, res, next) => {
       { header: 'Plate Number', key: 'plate', width: 16 },
       { header: 'Scheduled', key: 'scheduledAt', width: 20, style: { numFmt: DATE_FMT } },
       { header: 'Amount (INR)', key: 'amount', width: 14, style: { numFmt: '#,##0.00' } },
+      { header: 'Address', key: 'address', width: 40 },
       { header: 'Notes', key: 'notes', width: 30 },
       { header: 'Created', key: 'createdAt', width: 20, style: { numFmt: DATE_FMT } },
     ];
@@ -39,6 +40,7 @@ const exportExcel = async (req, res, next) => {
       plate: b.plateNumber ?? '',
       scheduledAt: b.scheduledAt,
       amount: Number(b.totalAmount),
+      address: b.address ?? '',
       notes: b.notes ?? '',
       createdAt: b.createdAt,
     }));

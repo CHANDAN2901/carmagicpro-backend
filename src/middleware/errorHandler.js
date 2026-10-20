@@ -17,7 +17,8 @@ const errorHandler = (err, req, res, next) => {
     const issues = err.errors ?? err.issues ?? [];
     return res.status(400).json({
       success: false,
-      message: 'Validation error',
+      message: 'Please fix the highlighted fields.',
+      code: 'VALIDATION_ERROR',
       errors: issues.map((e) => ({ field: e.path.join('.'), message: e.message })),
     });
   }
@@ -33,7 +34,14 @@ const errorHandler = (err, req, res, next) => {
     res.set('Retry-After', String(err.retryAfter));
   }
 
-  res.status(status).json({ success: false, message: err.message || 'Internal server error' });
+  // Business-rule errors may carry a machine `code` (e.g. SLOT_UNAVAILABLE) and
+  // field-level `errors` ([{ field, message }]) for the apps to highlight inputs.
+  res.status(status).json({
+    success: false,
+    message: err.message || 'Internal server error',
+    ...(typeof err.code === 'string' && { code: err.code }),
+    ...(err.errors && { errors: err.errors }),
+  });
 };
 
 module.exports = errorHandler;

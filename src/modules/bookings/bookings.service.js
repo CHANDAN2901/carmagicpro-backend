@@ -1,7 +1,7 @@
 const prisma = require('../../config/prisma');
 const { generateBookingNumber } = require('../../utils/entityNumber');
 const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
-const { createInvoice } = require('../payments/payments.service');
+const { createInvoice, createPaymentLink } = require('../payments/payments.service');
 
 const vehicleInclude = {
   vehicleType: { select: { id: true, name: true } },
@@ -85,6 +85,18 @@ const create = async (data) => {
       data: { ...bookingData, bookingNumber, scheduledAt: new Date(bookingData.scheduledAt) },
       include: bookingInclude,
     });
+  }
+
+  // Admin sends a Razorpay payment link instead of collecting payment in
+  // person: booking stays PENDING until the customer actually pays (confirmed
+  // by the payment_link.paid webhook, or the admin's manual recheck).
+  if (paymentMethod === 'PAYMENT_LINK') {
+    const booking = await prisma.booking.create({
+      data: { ...bookingData, bookingNumber, scheduledAt: new Date(bookingData.scheduledAt), status: 'PENDING' },
+      include: bookingInclude,
+    });
+    const link = await createPaymentLink({ bookingId: booking.id, userId: booking.userId, amount: Number(booking.totalAmount) });
+    return { ...booking, paymentLink: link };
   }
 
   return prisma.$transaction(async (tx) => {

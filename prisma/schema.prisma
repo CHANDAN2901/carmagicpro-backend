@@ -302,6 +302,13 @@ model Booking {
   status        BookingStatus @default(PENDING)
   scheduledAt   DateTime      @map("scheduled_at")
   notes         String?
+  // Service address: formatted single line + the structured parts the apps send.
+  address        String?
+  addressDetails Json?        @map("address_details")
+  isHomePickup   Boolean      @default(false) @map("is_home_pickup")
+  // List price for the vehicle type at booking time; totalAmount is the price
+  // after the service discount (coupon discounts live on the Payment).
+  originalPrice  Decimal?     @map("original_price") @db.Decimal(10, 2)
   totalAmount   Decimal       @map("total_amount") @db.Decimal(10, 2)
   beforeImages  String[]      @default([]) @map("before_images")
   afterImages   String[]      @default([]) @map("after_images")
@@ -520,28 +527,30 @@ enum WebhookEventStatus {
 }
 
 model Payment {
-  id                 String            @id @default(cuid())
-  entityType         PaymentEntityType
-  entityId           String            @map("entity_id")
-  userId             String            @map("user_id")
-  provider           PaymentProvider   @default(RAZORPAY)
-  status             PaymentStatus     @default(CREATED)
-  amount             Decimal           @db.Decimal(10, 2)
-  currency           String            @default("INR")
-  method             PaymentMethod?
-  razorpayOrderId    String?           @unique @map("razorpay_order_id")
-  razorpayPaymentId  String?           @unique @map("razorpay_payment_id")
-  razorpaySignature  String?           @map("razorpay_signature")
-  couponId           String?           @map("coupon_id")
-  couponCode         String?           @map("coupon_code")
-  discountAmount     Decimal?          @map("discount_amount") @db.Decimal(10, 2)
-  grossAmount        Decimal           @map("gross_amount") @db.Decimal(10, 2)
-  notes              String?
-  failureReason      String?           @map("failure_reason")
-  capturedAt         DateTime?         @map("captured_at")
-  confirmationSentAt DateTime?         @map("confirmation_sent_at")
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
+  id                    String            @id @default(cuid())
+  entityType            PaymentEntityType
+  entityId              String            @map("entity_id")
+  userId                String            @map("user_id")
+  provider              PaymentProvider   @default(RAZORPAY)
+  status                PaymentStatus     @default(CREATED)
+  amount                Decimal           @db.Decimal(10, 2)
+  currency              String            @default("INR")
+  method                PaymentMethod?
+  razorpayOrderId       String?           @unique @map("razorpay_order_id")
+  razorpayPaymentId     String?           @unique @map("razorpay_payment_id")
+  razorpaySignature     String?           @map("razorpay_signature")
+  razorpayPaymentLinkId String?           @unique @map("razorpay_payment_link_id")
+  paymentLinkUrl        String?           @map("payment_link_url")
+  couponId              String?           @map("coupon_id")
+  couponCode            String?           @map("coupon_code")
+  discountAmount        Decimal?          @map("discount_amount") @db.Decimal(10, 2)
+  grossAmount           Decimal           @map("gross_amount") @db.Decimal(10, 2)
+  notes                 String?
+  failureReason         String?           @map("failure_reason")
+  capturedAt            DateTime?         @map("captured_at")
+  confirmationSentAt    DateTime?         @map("confirmation_sent_at")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
 
   user    User         @relation(fields: [userId], references: [id])
   coupon  Coupon?      @relation(fields: [couponId], references: [id])

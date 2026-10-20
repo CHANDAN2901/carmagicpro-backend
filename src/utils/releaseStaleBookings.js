@@ -10,11 +10,23 @@ const BOOKING_HOLD_MINS = 15;
 // Cancels PENDING bookings whose hold has expired. Cheap indexed updateMany;
 // safe to call on every slot/booking read. If a late payment somehow verifies
 // after release, verifyPayment still flips the booking to CONFIRMED.
-const releaseStaleBookings = async () => {
+// `client` lets callers run this inside their own transaction.
+const releaseStaleBookings = async (client = prisma) => {
   const cutoff = new Date(Date.now() - BOOKING_HOLD_MINS * 60 * 1000);
   try {
-    return await prisma.booking.updateMany({
-      where: { status: 'PENDING', createdAt: { lt: cutoff } },
+    // A booking with an unpaid Razorpay payment link outlives the 15-min hold
+    // window — the customer may take longer than that to actually pay — so
+    // exclude those bookings and let Razorpay's own link expiry govern them.
+    const linkedBookingIds = await client.payment.findMany({
+      where: { entityType: 'BOOKING', status: 'CREATED', razorpayPaymentLinkId: { not: null } },
+      select: { entityId: true },
+    });
+    return await client.booking.updateMany({
+      where: {
+        status: 'PENDING',
+        createdAt: { lt: cutoff },
+        id: { notIn: linkedBookingIds.map((p) => p.entityId) },
+      },
       data: { status: 'CANCELLED' },
     });
   } catch (err) {

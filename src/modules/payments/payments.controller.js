@@ -4,7 +4,8 @@ const { createOrderSchema, verifySchema, refundSchema, listQuerySchema } = requi
 const createOrder = async (req, res, next) => {
   try {
     const data = createOrderSchema.parse(req.body);
-    const result = await paymentsService.createOrder(data);
+    // Never trust a userId from the body — the payer is the authenticated customer.
+    const result = await paymentsService.createOrder({ ...data, userId: req.user.userId });
     res.status(201).json({ success: true, data: result });
   } catch (err) { next(err); }
 };
@@ -55,4 +56,11 @@ const initiateRefund = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund };
+const recheckPaymentLink = async (req, res, next) => {
+  try {
+    const result = await paymentsService.recheckPaymentLink(req.params.id);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+};
+
+module.exports = { createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, recheckPaymentLink };

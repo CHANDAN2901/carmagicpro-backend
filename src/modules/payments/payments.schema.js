@@ -5,7 +5,7 @@ const createOrderSchema = z.object({
   entityId: z.string().min(1),
   couponCode: z.string().optional(),
   method: z.enum(['UPI', 'CARD', 'NETBANKING', 'WALLET', 'COD', 'OTHER']).optional(),
-  userId: z.string().min(1),
+  userId: z.string().optional(), // legacy, ignored — taken from the auth token
 });
 
 const verifySchema = z.object({

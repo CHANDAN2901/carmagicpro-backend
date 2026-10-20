@@ -11,8 +11,9 @@ const createBookingSchema = z.object({
   fuelType: z.string().optional(),
   plateNumber: z.string().optional()
     .refine((v) => !v || /^[A-Z0-9]{4,}$/i.test(v), 'Plate number must be letters and numbers only, no spaces or special characters'),
-  // Admin manual entry only: payment already collected in person.
-  paymentMethod: z.enum(['CASH', 'CARD']).optional(),
+  // Admin manual entry only: CASH/CARD = payment already collected in person;
+  // PAYMENT_LINK = a Razorpay payment link is generated and sent to the customer.
+  paymentMethod: z.enum(['CASH', 'CARD', 'PAYMENT_LINK']).optional(),
 });
 
 const updateBookingSchema = z.object({

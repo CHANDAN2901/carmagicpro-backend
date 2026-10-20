@@ -1,119 +1,35 @@
 const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { getEnv } = require('../../config/env');
-const couponsService = require('../coupons/coupons.service');
+const { captureAndConfirm } = require('../payments/payments.service');
 
 const prisma = new PrismaClient();
-
-// Re-use invoice creation logic
-const generateInvoiceNumber = async () => {
-  const result = await prisma.$queryRaw`
-    UPDATE invoice_counter SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq
-  `;
-  const seq = Number(result[0].last_seq);
-  return `INV-${new Date().getFullYear()}-${String(seq).padStart(6, '0')}`;
-};
-
-const buildLineItemsSnapshot = async (entityType, entityId) => {
-  if (entityType === 'BOOKING') {
-    const booking = await prisma.booking.findUnique({
-      where: { id: entityId },
-      include: { service: { select: { name: true, durationMins: true } } },
-    });
-    if (!booking) return [];
-    return [{
-      name: booking.service?.name ?? 'Service',
-      durationMins: booking.service?.durationMins,
-      scheduledAt: booking.scheduledAt,
-      unitPrice: Number(booking.totalAmount),
-      quantity: 1,
-      total: Number(booking.totalAmount),
-    }];
-  }
-  const order = await prisma.order.findUnique({
-    where: { id: entityId },
-    include: { items: { include: { product: { select: { name: true, sku: true } } } } },
-  });
-  if (!order) return [];
-  return order.items.map((item) => ({
-    name: item.product?.name ?? 'Product',
-    sku: item.product?.sku,
-    quantity: item.quantity,
-    unitPrice: Number(item.unitPrice),
-    total: item.quantity * Number(item.unitPrice),
-  }));
-};
 
 // ── Handlers ─────────────────────────────────────────────
 
 const handlePaymentCaptured = async (event) => {
   const entity = event.payload.payment.entity;
-  const razorpayOrderId = entity.order_id;
+  const payment = await prisma.payment.findUnique({ where: { razorpayOrderId: entity.order_id } });
+  if (!payment) return;
+  await captureAndConfirm(payment, {
+    razorpayPaymentId: entity.id,
+    method: mapRazorpayMethod(entity.method),
+    trigger: 'WEBHOOK:payment.captured',
+  });
+};
 
-  const payment = await prisma.payment.findUnique({ where: { razorpayOrderId } });
-  if (!payment || payment.status === 'CAPTURED') return; // already processed
-
-  const razorpayPaymentId = entity.id;
-  const method = mapRazorpayMethod(entity.method);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: 'CAPTURED',
-        razorpayPaymentId,
-        method,
-        capturedAt: new Date(),
-      },
-    });
-
-    await tx.paymentLog.create({
-      data: {
-        paymentId: payment.id,
-        fromStatus: payment.status,
-        toStatus: 'CAPTURED',
-        trigger: 'WEBHOOK:payment.captured',
-        metadata: { razorpayPaymentId, method, amount: entity.amount },
-      },
-    });
-
-    if (payment.couponId) {
-      const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { phone: true } });
-      let plateNumber;
-      if (payment.entityType === 'BOOKING') {
-        const booking = await tx.booking.findUnique({ where: { id: payment.entityId }, select: { plateNumber: true } });
-        plateNumber = booking?.plateNumber;
-      }
-      if (user?.phone) {
-        await couponsService.recordUsage(tx, { couponId: payment.couponId, userPhone: user.phone, plateNumber });
-      }
-    }
-
-    // Generate invoice
-    const invoiceNumber = await generateInvoiceNumber();
-    const snapshot = await buildLineItemsSnapshot(payment.entityType, payment.entityId);
-    await tx.invoice.create({
-      data: {
-        paymentId: payment.id,
-        invoiceNumber,
-        entityType: payment.entityType,
-        entityId: payment.entityId,
-        userId: payment.userId,
-        lineItemsSnapshot: snapshot,
-        subtotal: Number(payment.grossAmount),
-        discountAmount: Number(payment.discountAmount ?? 0),
-        taxAmount: 0,
-        totalAmount: Number(payment.amount),
-        couponCode: payment.couponCode,
-      },
-    });
-
-    // Confirm entity
-    if (payment.entityType === 'BOOKING') {
-      await tx.booking.update({ where: { id: payment.entityId }, data: { status: 'CONFIRMED' } });
-    } else {
-      await tx.order.update({ where: { id: payment.entityId }, data: { status: 'CONFIRMED' } });
-    }
+// Payment Links create their own Razorpay order under the hood, so the paid
+// payment's order_id won't match ours — look the Payment up by the link ID
+// (stored at link-creation time) instead of by order_id.
+const handlePaymentLinkPaid = async (event) => {
+  const linkId = event.payload.payment_link.entity.id;
+  const entity = event.payload.payment.entity;
+  const payment = await prisma.payment.findUnique({ where: { razorpayPaymentLinkId: linkId } });
+  if (!payment) return;
+  await captureAndConfirm(payment, {
+    razorpayPaymentId: entity.id,
+    method: mapRazorpayMethod(entity.method),
+    trigger: 'WEBHOOK:payment_link.paid',
   });
 };
 
@@ -246,6 +162,7 @@ const processWebhook = async (rawBody, signature, eventId) => {
   try {
     switch (event.event) {
       case 'payment.captured':    await handlePaymentCaptured(event); break;
+      case 'payment_link.paid':   await handlePaymentLinkPaid(event); break;
       case 'payment.failed':      await handlePaymentFailed(event); break;
       case 'payment.authorized':  await handlePaymentAuthorized(event); break;
       case 'refund.processed':    await handleRefundProcessed(event); break;

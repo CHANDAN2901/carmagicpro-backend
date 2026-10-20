@@ -3,8 +3,8 @@ const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
 
 const DEFAULT_CONFIG = { workStartTime: '09:00', workEndTime: '18:00', employeeTeams: 3, slotIntervalMins: 30 };
 
-const getConfig = async () => {
-  const config = await prisma.slotConfig.findFirst();
+const getConfig = async (client = prisma) => {
+  const config = await client.slotConfig.findFirst();
   return config || DEFAULT_CONFIG;
 };
 
@@ -28,16 +28,26 @@ function toTimeStr(mins) {
   return `${h}:${m}`;
 }
 
-const getAvailableSlots = async ({ date, serviceId }) => {
-  if (!date || !serviceId) throw Object.assign(new Error('date and serviceId are required'), { statusCode: 400 });
+// Wall-clock date/time in IST. Slots are IST, but the server process runs in UTC
+// on the VPS, so never use getHours()/setHours() on booking timestamps.
+const IST_OFFSET_MS = 330 * 60 * 1000;
+const toIST = (d) => {
+  const iso = new Date(new Date(d).getTime() + IST_OFFSET_MS).toISOString();
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16), mins: toMins(iso.slice(11, 16)) };
+};
 
-  const config = await getConfig();
-  const service = await prisma.service.findUnique({ where: { id: serviceId }, select: { durationMins: true } });
+// `client` lets createBooking run the availability check inside its transaction.
+const getAvailableSlots = async ({ date, serviceId }, client = prisma) => {
+  if (!date || !serviceId) throw Object.assign(new Error('date and serviceId are required'), { statusCode: 400 });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw Object.assign(new Error('date must be YYYY-MM-DD'), { statusCode: 400 });
+
+  const config = await getConfig(client);
+  const service = await client.service.findUnique({ where: { id: serviceId }, select: { durationMins: true } });
   if (!service) throw Object.assign(new Error('Service not found'), { statusCode: 404 });
 
   // Check blocked date
   const targetDate = new Date(date);
-  const blocked = await prisma.blockedDate.findUnique({ where: { date: targetDate } });
+  const blocked = await client.blockedDate.findUnique({ where: { date: targetDate } });
   if (blocked) return [];
 
   const startMins = toMins(config.workStartTime);
@@ -54,35 +64,32 @@ const getAvailableSlots = async ({ date, serviceId }) => {
   if (candidates.length === 0) return [];
 
   // Release abandoned holds first so their slots don't stay blocked forever.
-  await releaseStaleBookings();
+  await releaseStaleBookings(client);
 
-  // Fetch all non-cancelled bookings for that date that involve this service's window
-  const dayStart = new Date(date);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(date);
-  dayEnd.setHours(23, 59, 59, 999);
-
-  const bookings = await prisma.booking.findMany({
+  // Fetch all non-cancelled bookings for that IST day (live PENDING holds count as taken)
+  const bookings = await client.booking.findMany({
     where: {
-      scheduledAt: { gte: dayStart, lte: dayEnd },
+      scheduledAt: { gte: new Date(`${date}T00:00:00+05:30`), lte: new Date(`${date}T23:59:59.999+05:30`) },
       status: { notIn: ['CANCELLED'] },
     },
     include: { service: { select: { durationMins: true } } },
   });
 
+  const now = toIST(new Date());
   const slots = candidates.map((slotStartMins) => {
     const slotEndMins = slotStartMins + duration;
+    const isPast = date < now.date || (date === now.date && slotStartMins <= now.mins);
 
     // Count overlapping bookings: a booking overlaps if its [start, start+duration) intersects [slotStart, slotEnd)
     const overlapping = bookings.filter((b) => {
-      const bStart = b.scheduledAt.getHours() * 60 + b.scheduledAt.getMinutes();
+      const bStart = toIST(b.scheduledAt).mins;
       const bEnd = bStart + (b.service?.durationMins ?? 30);
       return bStart < slotEndMins && bEnd > slotStartMins;
     });
 
     return {
       time: toTimeStr(slotStartMins),
-      available: overlapping.length < config.employeeTeams,
+      available: !isPast && overlapping.length < config.employeeTeams,
       bookedCount: overlapping.length,
       capacity: config.employeeTeams,
     };
@@ -105,4 +112,4 @@ const removeBlockedDate = async (id) => {
   return prisma.blockedDate.delete({ where: { id } });
 };
 
-module.exports = { getConfig, saveConfig, getAvailableSlots, getBlockedDates, addBlockedDate, removeBlockedDate };
+module.exports = { getConfig, saveConfig, getAvailableSlots, getBlockedDates, addBlockedDate, removeBlockedDate, toIST };

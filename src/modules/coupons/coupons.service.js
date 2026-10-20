@@ -1,4 +1,5 @@
 const prisma = require('../../config/prisma');
+const { normalizePlate } = require('../../utils/plate');
 
 const getAll = async () => {
   return prisma.coupon.findMany({ orderBy: { createdAt: 'desc' } });
@@ -34,7 +35,6 @@ const remove = async (id) => {
   return prisma.coupon.delete({ where: { id } });
 };
 
-const normalizePlate = (plateNumber) => (plateNumber ? plateNumber.toUpperCase().trim() : null);
 
 // Vehicle-plate takes priority when present (a booking has a specific vehicle);
 // falls back to phone-based tracking for plate-less bookings/memberships.

@@ -8,6 +8,7 @@ const {
   sendBookingNotificationToAdmin,
 } = require('../../utils/mailer');
 const couponsService = require('../coupons/coupons.service');
+const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
 
 const prisma = new PrismaClient();
 
@@ -61,8 +62,8 @@ const sendMembershipEmails = async (membershipId, { paymentMethod, paymentStatus
   });
 };
 
-// The booking's address / home-pickup flag / customer note are flattened into the
-// `notes` column at creation (see customer.controller.createBooking). Un-flatten
+// Bookings created before the address/isHomePickup columns existed have the
+// address, home-pickup flag and customer note flattened into `notes`. Un-flatten
 // them here so the confirmation email shows a clean address + the customer's note.
 const parseBookingNotes = (notes) => {
   const segments = (notes ?? '').split(' | ').map((s) => s.trim()).filter(Boolean);
@@ -108,7 +109,7 @@ const sendBookingEmails = async (bookingId, { paymentMethod, paymentStatus, amou
     vehicleModel,
     bookingDate: fmtDate(scheduled),
     bookingTime: fmtTimeIST(scheduled),
-    serviceAddress,
+    serviceAddress: booking.address || (booking.isHomePickup ? 'Home pickup' : serviceAddress),
     paymentMethod,
     paymentStatus,
     amount: Number(amount ?? booking.totalAmount).toFixed(2),
@@ -275,50 +276,57 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     throw err;
   }
 
-  // Fetch entity amount
+  // Fetch entity amount (404 for someone else's entity so ids can't be probed)
+  const notFound = (label) => Object.assign(new Error(`${label} not found`), { statusCode: 404 });
   let grossAmount;
   let plateNumber;
   if (entityType === 'BOOKING') {
-    const booking = await prisma.booking.findUnique({ where: { id: entityId }, select: { totalAmount: true, plateNumber: true } });
-    if (!booking) { const e = new Error('Booking not found'); e.statusCode = 404; throw e; }
+    // Expire an abandoned 15-min hold first, so it can't be paid for (or
+    // COD-confirmed) after its slot may already have been given away.
+    await releaseStaleBookings();
+    const booking = await prisma.booking.findUnique({
+      where: { id: entityId },
+      select: { userId: true, status: true, totalAmount: true, plateNumber: true },
+    });
+    if (!booking || booking.userId !== userId) throw notFound('Booking');
+    if (booking.status === 'CANCELLED') {
+      throw Object.assign(new Error('This booking expired before payment was completed. Please book the slot again.'),
+        { statusCode: 409, code: 'BOOKING_EXPIRED' });
+    }
+    if (booking.status !== 'PENDING') {
+      throw Object.assign(new Error('This booking is already confirmed.'), { statusCode: 409, code: 'BOOKING_NOT_PAYABLE' });
+    }
     grossAmount = Number(booking.totalAmount);
     plateNumber = booking.plateNumber;
   } else if (entityType === 'MEMBERSHIP') {
-    const membership = await prisma.membership.findUnique({ where: { id: entityId }, select: { price: true } });
-    if (!membership) { const e = new Error('Membership not found'); e.statusCode = 404; throw e; }
+    const membership = await prisma.membership.findUnique({ where: { id: entityId }, select: { userId: true, price: true } });
+    if (!membership || membership.userId !== userId) throw notFound('Membership');
     grossAmount = Number(membership.price);
   } else {
-    const order = await prisma.order.findUnique({ where: { id: entityId }, select: { totalAmount: true } });
-    if (!order) { const e = new Error('Order not found'); e.statusCode = 404; throw e; }
+    const order = await prisma.order.findUnique({ where: { id: entityId }, select: { userId: true, totalAmount: true } });
+    if (!order || order.userId !== userId) throw notFound('Order');
     grossAmount = Number(order.totalAmount);
   }
 
-  // Apply coupon if provided
+  // Apply coupon if provided — the same checks as the "apply coupon" preview
+  // (active, date window, usage limit, min amount, not already used by this
+  // phone/car), so an invalid coupon fails loudly instead of being ignored.
   let couponId = null;
   let discountAmount = 0;
   let finalAmount = grossAmount;
   let couponCodeStored = null;
   if (couponCode) {
-    const coupon = await prisma.coupon.findUnique({ where: { code: couponCode.toUpperCase() } });
-    if (coupon && coupon.isActive) {
-      const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
-      await couponsService.assertNotUsed({
-        couponId: coupon.id,
-        userPhone: user?.phone,
-        plateNumber: entityType === 'BOOKING' ? plateNumber : undefined,
-      });
-      if (coupon.type === 'FLAT') {
-        discountAmount = Math.min(Number(coupon.value), grossAmount);
-      } else {
-        discountAmount = Math.min(
-          (grossAmount * Number(coupon.value)) / 100,
-          Number(coupon.maxDiscount ?? Infinity)
-        );
-      }
-      finalAmount = Math.max(0, grossAmount - discountAmount);
-      couponId = coupon.id;
-      couponCodeStored = coupon.code;
-    }
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
+    const applied = await couponsService.apply({
+      code: couponCode,
+      amount: grossAmount,
+      userPhone: user?.phone,
+      plateNumber: entityType === 'BOOKING' ? plateNumber : undefined,
+    });
+    couponId = applied.couponId;
+    couponCodeStored = applied.code;
+    discountAmount = applied.discount;
+    finalAmount = applied.finalAmount;
   }
 
   // COD path
@@ -403,6 +411,118 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     currency: 'INR',
     key: process.env[`RAZORPAY_KEY_ID_${mode.toUpperCase()}`],
   };
+};
+
+// ── Shared: mark a Razorpay payment CAPTURED + confirm its entity ───────
+// Used by both the payment.captured/payment_link.paid webhooks and the admin
+// "recheck link status" fallback. Idempotent (no-op if already CAPTURED) and
+// fires the same confirmation email dispatch used everywhere else, since a
+// payment link has no frontend /verify call to trigger it.
+const captureAndConfirm = async (payment, { razorpayPaymentId, method, trigger }) => {
+  if (payment.status === 'CAPTURED') return;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: { status: 'CAPTURED', razorpayPaymentId, method, capturedAt: new Date() },
+    });
+    await tx.paymentLog.create({
+      data: {
+        paymentId: payment.id,
+        fromStatus: payment.status,
+        toStatus: 'CAPTURED',
+        trigger,
+        metadata: { razorpayPaymentId, method },
+      },
+    });
+    if (payment.couponId) {
+      const user = await tx.user.findUnique({ where: { id: payment.userId }, select: { phone: true } });
+      let plateNumber;
+      if (payment.entityType === 'BOOKING') {
+        const booking = await tx.booking.findUnique({ where: { id: payment.entityId }, select: { plateNumber: true } });
+        plateNumber = booking?.plateNumber;
+      }
+      if (user?.phone) {
+        await couponsService.recordUsage(tx, { couponId: payment.couponId, userPhone: user.phone, plateNumber });
+      }
+    }
+    await createInvoice(tx, payment);
+    if (payment.entityType === 'BOOKING') {
+      await tx.booking.update({ where: { id: payment.entityId }, data: { status: 'CONFIRMED' } });
+    } else if (payment.entityType === 'MEMBERSHIP') {
+      await activateMembership(tx, payment.entityId);
+    } else {
+      await tx.order.update({ where: { id: payment.entityId }, data: { status: 'CONFIRMED' } });
+    }
+  });
+
+  if (payment.entityType === 'BOOKING' || payment.entityType === 'MEMBERSHIP') {
+    sendConfirmationEmailsOnce(payment.id, { paymentMethod: 'Online (Razorpay)', paymentStatus: 'Paid' })
+      .catch((err) => console.error('[confirmation email] failed:', err?.message));
+  }
+};
+
+// ── Admin: create a Razorpay Payment Link for a manual booking ──────────
+// Razorpay hosts the payment page and, when a customer email/phone is given,
+// notifies the customer by email + SMS itself — no separate mailer/SMS code
+// needed. The admin UI also gets the raw short_url back to copy and share.
+const createPaymentLink = async ({ bookingId, userId, amount }) => {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true, phone: true } });
+
+  const razorpay = await getRazorpay();
+  const link = await razorpay.paymentLink.create({
+    amount: Math.round(amount * 100),
+    currency: 'INR',
+    customer: { name: user?.name, email: user?.email || undefined, contact: user?.phone || undefined },
+    notify: { sms: true, email: true },
+    reminder_enable: true,
+  });
+
+  const payment = await prisma.payment.create({
+    data: {
+      entityType: 'BOOKING',
+      entityId: bookingId,
+      userId,
+      provider: 'RAZORPAY',
+      status: 'CREATED',
+      grossAmount: amount,
+      amount,
+      razorpayPaymentLinkId: link.id,
+      paymentLinkUrl: link.short_url,
+    },
+  });
+
+  await prisma.paymentLog.create({
+    data: { paymentId: payment.id, toStatus: 'CREATED', trigger: 'ADMIN:payment_link_created' },
+  });
+
+  return { paymentId: payment.id, shortUrl: link.short_url, paymentLinkId: link.id };
+};
+
+// ── Admin: manually recheck a payment link's status (webhook fallback) ──
+const recheckPaymentLink = async (id) => {
+  const payment = await prisma.payment.findUnique({ where: { id } });
+  if (!payment) { const e = new Error('Payment not found'); e.statusCode = 404; throw e; }
+  if (!payment.razorpayPaymentLinkId) { const e = new Error('This payment has no associated payment link'); e.statusCode = 400; throw e; }
+
+  const razorpay = await getRazorpay();
+  const link = await razorpay.paymentLink.fetch(payment.razorpayPaymentLinkId);
+
+  if (link.status === 'paid') {
+    const paidEntry = (link.payments || []).find((p) => p.status === 'captured') || link.payments?.[0];
+    await captureAndConfirm(payment, {
+      razorpayPaymentId: paidEntry?.payment_id,
+      method: mapRazorpayMethod(paidEntry?.method),
+      trigger: 'ADMIN:recheck_link',
+    });
+  }
+
+  return { status: link.status };
+};
+
+const mapRazorpayMethod = (m) => {
+  const map = { upi: 'UPI', card: 'CARD', netbanking: 'NETBANKING', wallet: 'WALLET' };
+  return map[m] ?? 'OTHER';
 };
 
 // ── Public: verify Razorpay signature ────────────────────
@@ -597,4 +717,7 @@ const initiateRefund = async (id, { amount, reason }) => {
   return refund;
 };
 
-module.exports = { createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, createInvoice };
+module.exports = {
+  createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, createInvoice,
+  createPaymentLink, recheckPaymentLink, captureAndConfirm,
+};
