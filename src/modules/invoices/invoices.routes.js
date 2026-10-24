@@ -7,5 +7,6 @@ const router = Router();
 router.use(authenticate);
 router.get('/', ctrl.getAll);
 router.get('/:id', ctrl.getById);
+router.get('/:id/pdf', ctrl.downloadPdf);
 
 module.exports = router;

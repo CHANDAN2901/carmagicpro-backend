@@ -3,8 +3,8 @@ const { createUserSchema, updateUserSchema, listUsersQuerySchema } = require('./
 
 const getAll = async (req, res, next) => {
   try {
-    const { page, limit, search } = listUsersQuerySchema.parse(req.query);
-    const result = await usersService.getAll({ page, limit, search });
+    const { page, limit, search, type } = listUsersQuerySchema.parse(req.query);
+    const result = await usersService.getAll({ page, limit, search, type });
     res.json({ success: true, ...result });
   } catch (err) {
     next(err);
@@ -13,7 +13,7 @@ const getAll = async (req, res, next) => {
 
 const getById = async (req, res, next) => {
   try {
-    const user = await usersService.getById(req.params.id);
+    const user = await usersService.getDetail(req.params.id);
     res.json({ success: true, user });
   } catch (err) {
     next(err);

@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const invoicesService = require('./invoices.service');
+const { sendInvoicePdf } = require('../../utils/invoicePdf');
 
 const listQuerySchema = z.object({
   entityType: z.enum(['BOOKING', 'ORDER']).optional(),
@@ -25,4 +26,11 @@ const getById = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { getAll, getById };
+const downloadPdf = async (req, res, next) => {
+  try {
+    const invoice = await invoicesService.getById(req.params.id);
+    sendInvoicePdf(res, invoice);
+  } catch (err) { next(err); }
+};
+
+module.exports = { getAll, getById, downloadPdf };

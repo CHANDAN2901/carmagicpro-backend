@@ -16,6 +16,8 @@ const updateUserSchema = z.object({
 
 const listUsersQuerySchema = z.object({
   search: z.string().max(255).optional(),
+  // CLIENT = has at least one paid booking/membership; USER = never paid.
+  type: z.enum(['USER', 'CLIENT']).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
 });
