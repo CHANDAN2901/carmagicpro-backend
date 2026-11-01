@@ -3,6 +3,7 @@ const prisma = require('../../config/prisma');
 const { generateOtp, otpExpiresAt } = require('../../utils/otp');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../../utils/jwt');
 const { sendOtpSms } = require('../../utils/sms');
+const { sendOtpWhatsApp } = require('../../utils/whatsapp');
 const { NODE_ENV } = require('../../config/env');
 
 const MAX_OTP_ATTEMPTS = 3;
@@ -79,9 +80,14 @@ const dispatchOtp = async (userId, phone) => {
   await prisma.otp.create({ data: { userId, otp, expiresAt: otpExpiresAt() } });
 
   try {
-    await sendOtpSms(phone, otp);
+    await sendOtpWhatsApp(phone, otp);
   } catch (err) {
-    console.error('[OTP delivery failed]', err.message);
+    console.error('[WhatsApp OTP failed, falling back to SMS]', err.message);
+    try {
+      await sendOtpSms(phone, otp);
+    } catch (smsErr) {
+      console.error('[OTP delivery failed]', smsErr.message);
+    }
   }
 
   if (NODE_ENV !== 'production') console.warn('[DEV] Customer OTP for', phone, ':', otp);

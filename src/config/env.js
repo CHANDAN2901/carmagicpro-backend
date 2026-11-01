@@ -39,5 +39,8 @@ module.exports = {
   SMS_API_KEY: process.env.SMS_API_KEY,
   SMS_CLIENT_ID: process.env.SMS_CLIENT_ID,
   SMS_API_URL: process.env.SMS_API_URL || 'http://api.ssexpertsystem.com/api/v2/SendSMS',
+  // WhatsApp OTP (AiSensy). Unset → OTPs go via SMS only.
+  AISENSY_API_KEY: process.env.AISENSY_API_KEY,
+  AISENSY_OTP_CAMPAIGN: process.env.AISENSY_OTP_CAMPAIGN,
   getEnv,
 };

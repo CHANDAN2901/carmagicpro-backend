@@ -6,7 +6,6 @@ async function sendOtpSms(phone, otp) {
 
   const res = await fetch(url);
   const text = await res.text();
-  console.log('[SMS] raw response:', text);
 
   let json;
   try {
