@@ -78,19 +78,30 @@ const dispatchOtp = async (userId, phone) => {
 
   const otp = generateOtp();
   await prisma.otp.create({ data: { userId, otp, expiresAt: otpExpiresAt() } });
+  if (NODE_ENV !== 'production') console.warn('[DEV] Customer OTP for', phone, ':', otp);
 
+  // WhatsApp first, SMS fallback. The returned message tells the customer where to look.
   try {
     await sendOtpWhatsApp(phone, otp);
+    return 'OTP sent on WhatsApp. Please check your WhatsApp.';
   } catch (err) {
     console.error('[WhatsApp OTP failed, falling back to SMS]', err.message);
-    try {
-      await sendOtpSms(phone, otp);
-    } catch (smsErr) {
-      console.error('[OTP delivery failed]', smsErr.message);
-    }
   }
 
-  if (NODE_ENV !== 'production') console.warn('[DEV] Customer OTP for', phone, ':', otp);
+  try {
+    await sendOtpSms(phone, otp);
+    return 'OTP sent via SMS. Please check your messages.';
+  } catch (err) {
+    console.error('[OTP delivery failed]', err.message);
+  }
+
+  if (NODE_ENV !== 'production') return 'OTP not delivered. Use the code from the server console.';
+
+  // Drop the undelivered OTP so the resend cooldown doesn't block an immediate retry.
+  await prisma.otp.deleteMany({ where: { userId } });
+  const err = new Error('Could not send OTP. Please try again.');
+  err.statusCode = 502;
+  throw err;
 };
 
 const requestOtp = async ({ phone }) => {
@@ -108,8 +119,7 @@ const requestOtp = async ({ phone }) => {
     });
   }
 
-  await dispatchOtp(user.id, phone);
-  return { message: 'OTP sent to your phone.' };
+  return { message: await dispatchOtp(user.id, phone) };
 };
 
 const verifyOtp = async ({ phone, otp }, deviceInfo) => {
@@ -217,8 +227,7 @@ const resendOtp = async ({ phone }) => {
     throw err;
   }
 
-  await dispatchOtp(user.id, phone);
-  return { message: 'OTP resent to your phone.' };
+  return { message: await dispatchOtp(user.id, phone) };
 };
 
 module.exports = {
