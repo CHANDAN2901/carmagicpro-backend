@@ -25,6 +25,7 @@ const createMembershipAdminSchema = z.object({
   plateNumber: z.string().optional(),
   address: z.string().optional(),
   paymentMethod: z.enum(['CASH', 'CARD']),
+  couponCode: z.string().trim().min(1).optional(),
 });
 
 const listMembershipsQuerySchema = z.object({

@@ -2,6 +2,7 @@ const prisma = require('../../config/prisma');
 const { generateEntityNumber } = require('../../utils/entityNumber');
 const { getPlan } = require('./memberships.plans');
 const { createInvoice } = require('../payments/payments.service');
+const couponsService = require('../coupons/coupons.service');
 
 const vehicleInclude = {
   vehicleType: { select: { id: true, name: true } },
@@ -53,9 +54,11 @@ const create = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, pl
 // Admin: manual entry for a membership paid in person (cash/card swipe).
 // Activates immediately and creates a matching MANUAL/CAPTURED Payment + Invoice,
 // mirroring bookings.service.create's manual path — no Razorpay/COD flow involved.
-const createManual = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, plateNumber, address, paymentMethod }) => {
+const createManual = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, plateNumber, address, paymentMethod, couponCode }) => {
   const plan = getPlan(planKey);
   if (!plan) throw Object.assign(new Error('Invalid plan'), { statusCode: 400 });
+  // Optional coupon, validated like the customer checkout; stored on the Payment.
+  const { userPhone, ...paymentAmounts } = await couponsService.paymentFieldsFor({ code: couponCode, amount: plan.price, userId, plateNumber });
 
   const membershipNumber = await generateEntityNumber('MEMBERSHIP');
   const startDate = new Date();
@@ -90,14 +93,16 @@ const createManual = async ({ userId, planKey, vehicleTypeId, carModelId, fuelTy
         provider: 'MANUAL',
         status: 'CAPTURED',
         method: paymentMethod,
-        grossAmount: membership.price,
-        amount: membership.price,
+        ...paymentAmounts,
         capturedAt: new Date(),
       },
     });
     await tx.paymentLog.create({
       data: { paymentId: payment.id, toStatus: 'CAPTURED', trigger: 'ADMIN:manual_membership' },
     });
+    if (payment.couponId) {
+      await couponsService.recordUsage(tx, { couponId: payment.couponId, userPhone, plateNumber });
+    }
     await createInvoice(tx, payment);
 
     return membership;

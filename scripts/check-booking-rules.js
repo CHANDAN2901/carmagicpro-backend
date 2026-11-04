@@ -1,4 +1,4 @@
-// Self-check for the booking rules that are easy to break silently.
+// Self-check for the booking/invoice rules that are easy to break silently.
 // Run: TZ=UTC node scripts/check-booking-rules.js && TZ=Asia/Kolkata node scripts/check-booking-rules.js
 const assert = require('assert');
 const { normalizePlate, isValidPlate } = require('../src/utils/plate');
@@ -16,5 +16,13 @@ const tenThirty = new Date('2026-10-20T10:30:00+05:30');
 assert.deepStrictEqual(toIST(tenThirty), { date: '2026-10-20', time: '10:30', mins: 630 });
 assert.strictEqual(toIST(new Date('2026-10-20T23:45:00+05:30')).date, '2026-10-20');
 assert.strictEqual(toIST(new Date('2026-10-20T00:15:00+05:30')).date, '2026-10-20');
+
+// GST is backed out of GST-inclusive totals; the three parts must add back up exactly.
+const { gstBreakup } = require('../src/utils/invoicePdf');
+for (const total of [1099, 1299, 0.01, 47990, 8631.5]) {
+  const g = gstBreakup(total, 18);
+  assert.strictEqual(Math.round((g.taxable + g.cgst + g.sgst) * 100), Math.round(total * 100), `GST parts != ${total}`);
+}
+assert.deepStrictEqual(gstBreakup(1099, 18), { rate: 18, taxable: 931.36, cgst: 83.82, sgst: 83.82, tax: 167.64 });
 
 console.log(`booking rules ok (TZ=${process.env.TZ ?? 'system'})`);

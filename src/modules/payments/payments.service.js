@@ -174,8 +174,11 @@ const activateMembership = (client, membershipId) => {
 
 // ── Invoice helpers ──────────────────────────────────────
 
-const generateInvoiceNumber = async () => {
-  const result = await prisma.$queryRaw`
+// Both helpers take the caller's transaction client: manual bookings/memberships
+// create the entity in the same transaction, so a global-client read would not
+// see it (empty line items), and a burned number would leave a gap in the series.
+const generateInvoiceNumber = async (client) => {
+  const result = await client.$queryRaw`
     UPDATE invoice_counter SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq
   `;
   const seq = Number(result[0].last_seq);
@@ -183,9 +186,9 @@ const generateInvoiceNumber = async () => {
   return `INV-${year}-${String(seq).padStart(6, '0')}`;
 };
 
-const buildLineItemsSnapshot = async (entityType, entityId) => {
+const buildLineItemsSnapshot = async (client, entityType, entityId) => {
   if (entityType === 'MEMBERSHIP') {
-    const membership = await prisma.membership.findUnique({ where: { id: entityId } });
+    const membership = await client.membership.findUnique({ where: { id: entityId } });
     if (!membership) return [];
     return [
       {
@@ -198,7 +201,7 @@ const buildLineItemsSnapshot = async (entityType, entityId) => {
     ];
   }
   if (entityType === 'BOOKING') {
-    const booking = await prisma.booking.findUnique({
+    const booking = await client.booking.findUnique({
       where: { id: entityId },
       include: { service: { select: { name: true, durationMins: true } } },
     });
@@ -215,7 +218,7 @@ const buildLineItemsSnapshot = async (entityType, entityId) => {
     ];
   }
   // ORDER
-  const order = await prisma.order.findUnique({
+  const order = await client.order.findUnique({
     where: { id: entityId },
     include: {
       items: {
@@ -240,8 +243,8 @@ const buildLineItemsSnapshot = async (entityType, entityId) => {
 };
 
 const createInvoice = async (prismaClient, payment) => {
-  const invoiceNumber = await generateInvoiceNumber();
-  const snapshot = await buildLineItemsSnapshot(payment.entityType, payment.entityId);
+  const invoiceNumber = await generateInvoiceNumber(prismaClient);
+  const snapshot = await buildLineItemsSnapshot(prismaClient, payment.entityType, payment.entityId);
   const subtotal = Number(payment.grossAmount);
   const discountAmount = Number(payment.discountAmount ?? 0);
   const totalAmount = Number(payment.amount);
@@ -466,7 +469,11 @@ const captureAndConfirm = async (payment, { razorpayPaymentId, method, trigger }
 // Razorpay hosts the payment page and, when a customer email/phone is given,
 // notifies the customer by email + SMS itself — no separate mailer/SMS code
 // needed. The admin UI also gets the raw short_url back to copy and share.
-const createPaymentLink = async ({ bookingId, userId, amount }) => {
+// `amount` is what the customer pays; grossAmount/discount/coupon are set when an
+// admin applied a coupon (usage is recorded on capture, in captureAndConfirm).
+const createPaymentLink = async ({
+  bookingId, userId, amount, grossAmount = amount, discountAmount = 0, couponId = null, couponCode = null,
+}) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true, phone: true } });
 
   const razorpay = await getRazorpay();
@@ -485,8 +492,11 @@ const createPaymentLink = async ({ bookingId, userId, amount }) => {
       userId,
       provider: 'RAZORPAY',
       status: 'CREATED',
-      grossAmount: amount,
+      grossAmount,
+      discountAmount,
       amount,
+      couponId,
+      couponCode,
       razorpayPaymentLinkId: link.id,
       paymentLinkUrl: link.short_url,
     },
@@ -718,6 +728,6 @@ const initiateRefund = async (id, { amount, reason }) => {
 };
 
 module.exports = {
-  createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, createInvoice,
+  createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, createInvoice, buildLineItemsSnapshot,
   createPaymentLink, recheckPaymentLink, captureAndConfirm,
 };

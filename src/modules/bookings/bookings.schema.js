@@ -14,6 +14,7 @@ const createBookingSchema = z.object({
   // Admin manual entry only: CASH/CARD = payment already collected in person;
   // PAYMENT_LINK = a Razorpay payment link is generated and sent to the customer.
   paymentMethod: z.enum(['CASH', 'CARD', 'PAYMENT_LINK']).optional(),
+  couponCode: z.string().trim().min(1).optional(),
 });
 
 const updateBookingSchema = z.object({

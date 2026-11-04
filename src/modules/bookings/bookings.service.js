@@ -2,6 +2,7 @@ const prisma = require('../../config/prisma');
 const { generateBookingNumber } = require('../../utils/entityNumber');
 const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
 const { createInvoice, createPaymentLink } = require('../payments/payments.service');
+const couponsService = require('../coupons/coupons.service');
 
 const vehicleInclude = {
   vehicleType: { select: { id: true, name: true } },
@@ -70,7 +71,16 @@ const getById = async (id) => {
 };
 
 const create = async (data) => {
-  const { paymentMethod, ...bookingData } = data;
+  const { paymentMethod, couponCode, ...bookingData } = data;
+  if (couponCode && !paymentMethod) {
+    throw Object.assign(new Error('Pick how the payment was collected to apply a coupon'), { statusCode: 400 });
+  }
+  // Coupon (optional) is validated like the customer checkout and lives on the
+  // Payment (gross / discount / amount); booking.totalAmount stays the list price.
+  const amounts = await couponsService.paymentFieldsFor({
+    code: couponCode, amount: bookingData.totalAmount, userId: bookingData.userId, plateNumber: bookingData.plateNumber,
+  });
+  const { userPhone, ...paymentAmounts } = amounts;
   const bookingNumber = await generateBookingNumber();
   const bookingInclude = {
     user: { select: { id: true, name: true, phone: true } },
@@ -95,7 +105,7 @@ const create = async (data) => {
       data: { ...bookingData, bookingNumber, scheduledAt: new Date(bookingData.scheduledAt), status: 'PENDING' },
       include: bookingInclude,
     });
-    const link = await createPaymentLink({ bookingId: booking.id, userId: booking.userId, amount: Number(booking.totalAmount) });
+    const link = await createPaymentLink({ bookingId: booking.id, userId: booking.userId, ...paymentAmounts });
     return { ...booking, paymentLink: link };
   }
 
@@ -118,14 +128,16 @@ const create = async (data) => {
         provider: 'MANUAL',
         status: 'CAPTURED',
         method: paymentMethod,
-        grossAmount: booking.totalAmount,
-        amount: booking.totalAmount,
+        ...paymentAmounts,
         capturedAt: new Date(),
       },
     });
     await tx.paymentLog.create({
       data: { paymentId: payment.id, toStatus: 'CAPTURED', trigger: 'ADMIN:manual_booking' },
     });
+    if (payment.couponId) {
+      await couponsService.recordUsage(tx, { couponId: payment.couponId, userPhone, plateNumber: booking.plateNumber });
+    }
     await createInvoice(tx, payment);
 
     return booking;

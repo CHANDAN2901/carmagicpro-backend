@@ -100,6 +100,23 @@ const apply = async ({ code, amount, userPhone, plateNumber }) => {
   };
 };
 
+// Admin manual entry: validate `code` for this customer/car (same checks as the
+// customer checkout) and return the Payment fields to store. No code → no discount.
+const paymentFieldsFor = async ({ code, amount, userId, plateNumber }) => {
+  const gross = Number(amount);
+  if (!code) return { grossAmount: gross, discountAmount: 0, amount: gross, couponId: null, couponCode: null };
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
+  const applied = await apply({ code, amount: gross, userPhone: user?.phone, plateNumber });
+  return {
+    grossAmount: gross,
+    discountAmount: applied.discount,
+    amount: applied.finalAmount,
+    couponId: applied.couponId,
+    couponCode: applied.code,
+    userPhone: user?.phone,
+  };
+};
+
 // Call this when payment is captured to record usage. Upserts so retried
 // captures (webhook + verify racing) don't fail on the unique constraint.
 const recordUsage = async (tx, { couponId, userPhone, plateNumber }) => {
@@ -124,4 +141,4 @@ const bulkRemove = async (ids) => {
   return { deleted, failed }
 }
 
-module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage };
+module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage, paymentFieldsFor };
