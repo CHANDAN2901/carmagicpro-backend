@@ -1,8 +1,5 @@
 const PDFDocument = require('pdfkit');
-const {
-  SUPPORT_EMAIL, SUPPORT_NUMBER, WEBSITE_URL,
-  BUSINESS_GSTIN, BUSINESS_LEGAL_NAME, BUSINESS_ADDRESS, BUSINESS_STATE, GST_RATE, SERVICE_SAC_CODE,
-} = require('../config/env');
+const { SUPPORT_EMAIL, SUPPORT_NUMBER, WEBSITE_URL } = require('../config/env');
 
 // ponytail: built-in Helvetica is WinAnsi-only, so amounts use "Rs." (no ₹ glyph)
 // and non-Latin names won't render; embed a TTF via doc.registerFont if needed.
@@ -15,9 +12,9 @@ const round2 = (n) => Math.round(n * 100) / 100;
 
 // Prices are GST-inclusive (what the customer pays), so the tax is backed out of
 // the invoice total and split equally into CGST + SGST (intra-state supply).
-// ponytail: the rate is read from config at render time and every supply is
-// treated as intra-state — store invoice.taxRate at issue time if the rate ever
-// changes, and add IGST if products start shipping out of state.
+// ponytail: every supply is treated as intra-state; add IGST if products start
+// shipping out of state.  Invoices issued before GST was set up have no stored
+// taxRate and use the current rate.
 const gstBreakup = (total, rate) => {
   const taxable = round2((Number(total) * 100) / (100 + rate));
   const tax = round2(Number(total) - taxable);
@@ -38,8 +35,9 @@ const row = (doc, y, cells, opts = {}) => {
 };
 
 // Streams an invoice (from invoices.service.getById) to the response as a PDF download.
-const sendInvoicePdf = (res, invoice) => {
-  const gst = BUSINESS_GSTIN ? gstBreakup(invoice.totalAmount, Number(invoice.taxRate ?? GST_RATE)) : null;
+// `settings` = the business GST details (invoices.service.getGstSettings).
+const sendInvoicePdf = (res, invoice, settings = {}) => {
+  const gst = settings.gstin ? gstBreakup(invoice.totalAmount, Number(invoice.taxRate ?? settings.rate)) : null;
 
   const doc = new PDFDocument({ size: 'A4', margin: LEFT });
   res.setHeader('Content-Type', 'application/pdf');
@@ -50,9 +48,9 @@ const sendInvoicePdf = (res, invoice) => {
   doc.font('Helvetica-Bold').fontSize(20).fillColor('#1a1a1a').text('Car Magic Pro', LEFT, 50, { width: 270 });
   doc.font('Helvetica').fontSize(9).fillColor('#555');
   if (gst) {
-    if (BUSINESS_LEGAL_NAME) doc.text(BUSINESS_LEGAL_NAME, { width: 270 });
-    if (BUSINESS_ADDRESS) doc.text(BUSINESS_ADDRESS, { width: 270 });
-    doc.font('Helvetica-Bold').fillColor('#1a1a1a').text(`GSTIN: ${BUSINESS_GSTIN}`).font('Helvetica').fillColor('#555');
+    if (settings.legalName) doc.text(settings.legalName, { width: 270 });
+    if (settings.address) doc.text(settings.address, { width: 270 });
+    doc.font('Helvetica-Bold').fillColor('#1a1a1a').text(`GSTIN: ${settings.gstin}`).font('Helvetica').fillColor('#555');
   }
   doc.text(WEBSITE_URL).text(`Email: ${SUPPORT_EMAIL ?? ''}`).text(`Phone: ${SUPPORT_NUMBER}`);
   const leftBottom = doc.y;
@@ -64,7 +62,7 @@ const sendInvoicePdf = (res, invoice) => {
     ['Date', istDate(invoice.issuedAt)],
     ['Type', invoice.entityType],
     ['Payment', [invoice.payment?.method, invoice.payment?.status === 'CAPTURED' ? 'PAID' : invoice.payment?.status].filter(Boolean).join(' · ')],
-    ...(gst ? [['Place of supply', [BUSINESS_STATE, `(${BUSINESS_GSTIN.slice(0, 2)})`].filter(Boolean).join(' ')]] : []),
+    ...(gst ? [['Place of supply', [settings.state, `(${settings.gstin.slice(0, 2)})`].filter(Boolean).join(' ')]] : []),
   ];
   let y = 76;
   for (const [label, value] of meta) {
@@ -89,7 +87,7 @@ const sendInvoicePdf = (res, invoice) => {
   row(doc, y, { item: 'Item', qty: 'Qty', price: 'Price', total: 'Total' });
   y += 26;
 
-  const sac = gst && invoice.entityType !== 'ORDER' && SERVICE_SAC_CODE ? `SAC: ${SERVICE_SAC_CODE}` : null;
+  const sac = gst && invoice.entityType !== 'ORDER' && settings.sacCode ? `SAC: ${settings.sacCode}` : null;
   doc.font('Helvetica').fontSize(9).fillColor('#1a1a1a');
   for (const item of Array.isArray(invoice.lineItemsSnapshot) ? invoice.lineItemsSnapshot : []) {
     const sub = [sac, item.sku && `SKU: ${item.sku}`, item.scheduledAt && `Scheduled: ${istDate(item.scheduledAt, true)}`]

@@ -8,6 +8,7 @@ const {
   sendBookingNotificationToAdmin,
 } = require('../../utils/mailer');
 const couponsService = require('../coupons/coupons.service');
+const { getGstSettings } = require('../invoices/invoices.service');
 const { releaseStaleBookings } = require('../../utils/releaseStaleBookings');
 
 const prisma = new PrismaClient();
@@ -245,6 +246,9 @@ const buildLineItemsSnapshot = async (client, entityType, entityId) => {
 const createInvoice = async (prismaClient, payment) => {
   const invoiceNumber = await generateInvoiceNumber(prismaClient);
   const snapshot = await buildLineItemsSnapshot(prismaClient, payment.entityType, payment.entityId);
+  // Record the GST rate in force at issue time, so a later rate change in
+  // CRM → GST Settings doesn't alter invoices already issued.
+  const gst = await getGstSettings(prismaClient);
   const subtotal = Number(payment.grossAmount);
   const discountAmount = Number(payment.discountAmount ?? 0);
   const totalAmount = Number(payment.amount);
@@ -262,6 +266,7 @@ const createInvoice = async (prismaClient, payment) => {
       taxAmount: 0,
       totalAmount,
       couponCode: payment.couponCode,
+      taxRate: gst.gstin ? gst.rate : null,
     },
   });
 };

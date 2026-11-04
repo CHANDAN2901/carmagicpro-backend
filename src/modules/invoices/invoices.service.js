@@ -42,4 +42,25 @@ const getById = async (id) => {
   return invoice;
 };
 
-module.exports = { getAll, getById };
+// Business GST details printed on invoices, edited from CRM → GST Settings.
+// One JSON row in app_settings; an empty gstin means plain (non-GST) invoices.
+const GST_SETTINGS_KEY = 'gst_settings';
+const DEFAULT_GST_SETTINGS = { gstin: '', legalName: '', address: '', state: '', sacCode: '', rate: 18 };
+
+// `client` lets createInvoice read it inside its transaction.
+const getGstSettings = async (client = prisma) => {
+  const row = await client.appSetting.findUnique({ where: { key: GST_SETTINGS_KEY } });
+  return { ...DEFAULT_GST_SETTINGS, ...(row ? JSON.parse(row.value) : {}) };
+};
+
+const saveGstSettings = async (data) => {
+  const value = JSON.stringify(data);
+  await prisma.appSetting.upsert({
+    where: { key: GST_SETTINGS_KEY },
+    update: { value },
+    create: { key: GST_SETTINGS_KEY, value },
+  });
+  return getGstSettings();
+};
+
+module.exports = { getAll, getById, getGstSettings, saveGstSettings };

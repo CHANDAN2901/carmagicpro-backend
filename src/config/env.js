@@ -42,13 +42,5 @@ module.exports = {
   // WhatsApp OTP (AiSensy). Unset → OTPs go via SMS only.
   AISENSY_API_KEY: process.env.AISENSY_API_KEY,
   AISENSY_OTP_CAMPAIGN: process.env.AISENSY_OTP_CAMPAIGN,
-  // GST on invoices. BUSINESS_GSTIN unset → plain invoices with no GST block
-  // (a business that isn't GST-registered must not show GST).
-  BUSINESS_GSTIN: process.env.BUSINESS_GSTIN,
-  BUSINESS_LEGAL_NAME: process.env.BUSINESS_LEGAL_NAME,
-  BUSINESS_ADDRESS: process.env.BUSINESS_ADDRESS,
-  BUSINESS_STATE: process.env.BUSINESS_STATE, // e.g. "Karnataka"; state code comes from the GSTIN
-  GST_RATE: Number(process.env.GST_RATE || 18),
-  SERVICE_SAC_CODE: process.env.SERVICE_SAC_CODE, // printed on service/membership line items
   getEnv,
 };

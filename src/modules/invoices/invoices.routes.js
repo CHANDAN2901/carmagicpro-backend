@@ -6,6 +6,8 @@ const router = Router();
 
 router.use(authenticate);
 router.get('/', ctrl.getAll);
+router.get('/gst-settings', ctrl.getGstSettings); // must precede '/:id'
+router.put('/gst-settings', ctrl.updateGstSettings);
 router.get('/:id', ctrl.getById);
 router.get('/:id/pdf', ctrl.downloadPdf);
 
