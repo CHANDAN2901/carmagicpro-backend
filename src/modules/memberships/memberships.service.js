@@ -1,7 +1,7 @@
 const prisma = require('../../config/prisma');
 const { generateEntityNumber } = require('../../utils/entityNumber');
 const { getPlan } = require('./memberships.plans');
-const { createInvoice } = require('../payments/payments.service');
+const { createInvoice, sendConfirmationEmailsOnce } = require('../payments/payments.service');
 const couponsService = require('../coupons/coupons.service');
 
 const vehicleInclude = {
@@ -105,6 +105,11 @@ const createManual = async ({ userId, planKey, vehicleTypeId, carModelId, fuelTy
     }
     await createInvoice(tx, payment);
 
+    return { membership, payment };
+  }).then(({ membership, payment }) => {
+    // Same confirmation emails the customer gets after paying on the website.
+    sendConfirmationEmailsOnce(payment.id, { paymentMethod: paymentMethod === 'CARD' ? 'Card' : 'Cash', paymentStatus: 'Paid' })
+      .catch((err) => console.error('[confirmation email] failed:', err?.message));
     return membership;
   });
 };
@@ -167,4 +172,21 @@ const cancel = async (id, userId) => {
   return count > 0;
 };
 
-module.exports = { create, createManual, getMine, getAll, getById, getForExport, cancel };
+// Admin: delete an abandoned PENDING membership (e.g. a dismissed checkout).
+// Anything with money attached (captured / COD) must stay for the books.
+const remove = async (id) => {
+  const membership = await prisma.membership.findUnique({ where: { id }, select: { status: true } });
+  if (!membership) throw Object.assign(new Error('Membership not found'), { statusCode: 404 });
+  const paid = await prisma.payment.count({
+    where: { entityType: 'MEMBERSHIP', entityId: id, status: { in: ['AUTHORIZED', 'CAPTURED', 'PARTIALLY_REFUNDED', 'REFUNDED', 'COD_PENDING'] } },
+  });
+  if (membership.status !== 'PENDING' || paid > 0) {
+    throw Object.assign(new Error('Only unpaid PENDING memberships can be deleted'), { statusCode: 409 });
+  }
+  await prisma.$transaction([
+    prisma.payment.deleteMany({ where: { entityType: 'MEMBERSHIP', entityId: id } }), // payment logs cascade
+    prisma.membership.delete({ where: { id } }),
+  ]);
+};
+
+module.exports = { create, createManual, remove, getMine, getAll, getById, getForExport, cancel };

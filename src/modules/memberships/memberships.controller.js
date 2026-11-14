@@ -101,4 +101,12 @@ const exportExcel = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { getPlans, createForCustomer, cancel, createManual, getMine, getAll, getById, exportExcel };
+// Admin: delete an unpaid PENDING membership.
+const remove = async (req, res, next) => {
+  try {
+    await membershipsService.remove(req.params.id);
+    res.json({ success: true, message: 'Membership deleted' });
+  } catch (err) { next(err); }
+};
+
+module.exports = { getPlans, createForCustomer, cancel, createManual, getMine, getAll, getById, exportExcel, remove };

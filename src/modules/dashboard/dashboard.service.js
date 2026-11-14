@@ -1,4 +1,5 @@
 const prisma = require('../../config/prisma');
+const { PAID_SERVICE } = require('../users/users.service');
 
 const getStats = async () => {
   const now = new Date();
@@ -12,6 +13,8 @@ const getStats = async () => {
     totalBookings, bookingsLastMonth,
     revenueResult, revenueLastMonthResult,
     recentOrders, recentBookings,
+    totalClients, clientsLastMonth,
+    activeMemberships, membershipsLastMonth,
   ] = await Promise.all([
     prisma.user.count({ where: { role: 'CUSTOMER' } }),
     prisma.user.count({ where: { role: 'CUSTOMER', createdAt: { lt: startOfMonth } } }),
@@ -34,6 +37,11 @@ const getStats = async () => {
         service: { select: { id: true, name: true } },
       },
     }),
+    // Client = customer who has paid for a booking/membership (same rule as the Users tab).
+    prisma.user.count({ where: { role: 'CUSTOMER', payments: { some: PAID_SERVICE } } }),
+    prisma.user.count({ where: { role: 'CUSTOMER', payments: { some: { ...PAID_SERVICE, capturedAt: { lt: startOfMonth } } } } }),
+    prisma.membership.count({ where: { status: 'ACTIVE' } }),
+    prisma.membership.count({ where: { status: 'ACTIVE', startDate: { lt: startOfMonth } } }),
   ]);
 
   const pct = (curr, prev) => {
@@ -49,6 +57,8 @@ const getStats = async () => {
   return {
     stats: {
       totalUsers: { value: totalUsers, change: pct(totalUsers, usersLastMonth) },
+      totalClients: { value: totalClients, change: pct(totalClients, clientsLastMonth) },
+      activeMemberships: { value: activeMemberships, change: pct(activeMemberships, membershipsLastMonth) },
       totalOrders: { value: totalOrders, change: pct(totalOrders, ordersLastMonth) },
       totalBookings: { value: totalBookings, change: pct(totalBookings, bookingsLastMonth) },
       totalRevenue: { value: totalRevenue, change: pct(totalRevenue, lastMonthRevenue) },

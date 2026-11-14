@@ -39,6 +39,16 @@ const getAll = async ({ page = 1, limit = 20, search, type } = {}) => {
   return { users, total, page, limit };
 };
 
+// Every customer created within an inclusive date range, for the Excel export.
+const getForExport = async ({ gte, lte }) => {
+  const rows = await prisma.user.findMany({
+    where: { role: 'CUSTOMER', createdAt: { gte, lte } },
+    orderBy: { createdAt: 'desc' },
+    select: { ...userSelect, _count: { select: { bookings: true, payments: { where: PAID_SERVICE } } } },
+  });
+  return rows.map(({ _count, ...u }) => ({ ...u, bookingCount: _count.bookings, isClient: _count.payments > 0 }));
+};
+
 const getById = async (id) => {
   const user = await prisma.user.findUnique({ where: { id }, select: userSelect });
   if (!user) throw Object.assign(new Error('User not found'), { statusCode: 404 });
@@ -102,4 +112,4 @@ const bulkRemove = async (ids) => {
   return { deleted, failed }
 }
 
-module.exports = { getAll, getById, getDetail, create, update, remove, bulkRemove };
+module.exports = { PAID_SERVICE, getForExport, getAll, getById, getDetail, create, update, remove, bulkRemove };

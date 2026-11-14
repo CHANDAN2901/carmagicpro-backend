@@ -734,5 +734,5 @@ const initiateRefund = async (id, { amount, reason }) => {
 
 module.exports = {
   createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, createInvoice, buildLineItemsSnapshot,
-  createPaymentLink, recheckPaymentLink, captureAndConfirm,
+  createPaymentLink, recheckPaymentLink, captureAndConfirm, sendConfirmationEmailsOnce,
 };

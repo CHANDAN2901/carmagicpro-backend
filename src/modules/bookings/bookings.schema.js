@@ -1,5 +1,8 @@
 const { z } = require('zod');
 
+const plateNumber = z.string().optional()
+  .refine((v) => !v || /^[A-Z0-9]{4,}$/i.test(v), 'Plate number must be letters and numbers only, no spaces or special characters');
+
 const createBookingSchema = z.object({
   userId: z.string().min(1),
   serviceId: z.string().min(1),
@@ -9,8 +12,7 @@ const createBookingSchema = z.object({
   vehicleTypeId: z.string().optional(),
   carModelId: z.string().optional(),
   fuelType: z.string().optional(),
-  plateNumber: z.string().optional()
-    .refine((v) => !v || /^[A-Z0-9]{4,}$/i.test(v), 'Plate number must be letters and numbers only, no spaces or special characters'),
+  plateNumber,
   // Admin manual entry only: CASH/CARD = payment already collected in person;
   // PAYMENT_LINK = a Razorpay payment link is generated and sent to the customer.
   paymentMethod: z.enum(['CASH', 'CARD', 'PAYMENT_LINK']).optional(),
@@ -21,6 +23,13 @@ const updateBookingSchema = z.object({
   status: z.enum(['PENDING', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']).optional(),
   scheduledAt: z.string().datetime().optional(),
   notes: z.string().optional(),
+  // Reschedule / modify (totalAmount stays locked: payment + invoice already exist).
+  serviceId: z.string().min(1).optional(),
+  vehicleTypeId: z.string().min(1).nullable().optional(),
+  carModelId: z.string().min(1).nullable().optional(),
+  fuelType: z.enum(['PETROL', 'DIESEL', 'CNG', 'ELECTRIC', 'HYBRID']).nullable().optional(),
+  plateNumber: plateNumber.nullable(),
+  address: z.string().trim().max(500).optional(),
   beforeImages: z.array(z.string()).max(10).optional(),
   afterImages: z.array(z.string()).max(10).optional(),
 });

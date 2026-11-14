@@ -3,7 +3,7 @@ const prisma = require('../../config/prisma');
 const { generateBookingNumber, generateOrderNumber } = require('../../utils/entityNumber');
 const { releaseStaleBookings, BOOKING_HOLD_MINS } = require('../../utils/releaseStaleBookings');
 const { normalizePlate, isValidPlate, PLATE_ERROR } = require('../../utils/plate');
-const { getAvailableSlots, toIST } = require('../slots/slots.service');
+const { checkSlot, toIST } = require('../slots/slots.service');
 const couponsService = require('../coupons/coupons.service');
 const {
   sendOrderConfirmationEmail,
@@ -330,13 +330,10 @@ const createBooking = async (req, res, next) => {
     const address = data.addressDetails ? formatAddress(data.addressDetails) : (data.address || null);
 
     const booking = await prisma.$transaction(async (tx) => {
-      // Serialise bookings per day so two customers can't both take the last free team.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`booking:${data.slotDate}`}))`;
-      const slots = await getAvailableSlots({ date: data.slotDate, serviceId: data.serviceId }, tx);
-      if (slots.length === 0) throw fieldError(422, 'slotDate', 'Bookings are closed on this date. Please pick another day.');
-      const slot = slots.find((s) => s.time === data.slotTime);
-      if (!slot) throw fieldError(422, 'slotTime', 'This slot is outside working hours.');
-      if (!slot.available) {
+      const reason = await checkSlot(tx, { date: data.slotDate, time: data.slotTime, serviceId: data.serviceId });
+      if (reason === 'CLOSED') throw fieldError(422, 'slotDate', 'Bookings are closed on this date. Please pick another day.');
+      if (reason === 'OUTSIDE_HOURS') throw fieldError(422, 'slotTime', 'This slot is outside working hours.');
+      if (reason === 'TAKEN') {
         throw fieldError(409, 'slotTime', 'This slot is no longer available.', 'SLOT_UNAVAILABLE',
           `Sorry, the ${data.slotTime} slot was just booked. Please pick another time.`);
       }

@@ -37,7 +37,7 @@ const toIST = (d) => {
 };
 
 // `client` lets createBooking run the availability check inside its transaction.
-const getAvailableSlots = async ({ date, serviceId }, client = prisma) => {
+const getAvailableSlots = async ({ date, serviceId, excludeBookingId }, client = prisma) => {
   if (!date || !serviceId) throw Object.assign(new Error('date and serviceId are required'), { statusCode: 400 });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw Object.assign(new Error('date must be YYYY-MM-DD'), { statusCode: 400 });
 
@@ -71,6 +71,7 @@ const getAvailableSlots = async ({ date, serviceId }, client = prisma) => {
     where: {
       scheduledAt: { gte: new Date(`${date}T00:00:00+05:30`), lte: new Date(`${date}T23:59:59.999+05:30`) },
       status: { notIn: ['CANCELLED'] },
+      ...(excludeBookingId && { id: { not: excludeBookingId } }),
     },
     include: { service: { select: { durationMins: true } } },
   });
@@ -98,6 +99,20 @@ const getAvailableSlots = async ({ date, serviceId }, client = prisma) => {
   return slots;
 };
 
+// Shared booking guard (customer + admin create, admin reschedule). Must run inside
+// a transaction: the per-day advisory lock serialises bookings so two requests
+// can't both take the last free team. Returns null when bookable, else a reason.
+// `ignorePast` lets the admin log a walk-in after the fact (capacity still enforced).
+const checkSlot = async (tx, { date, time, serviceId, excludeBookingId, ignorePast = false }) => {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`booking:${date}`}))`;
+  const slots = await getAvailableSlots({ date, serviceId, excludeBookingId }, tx);
+  if (slots.length === 0) return 'CLOSED';
+  const slot = slots.find((s) => s.time === time);
+  if (!slot) return 'OUTSIDE_HOURS';
+  const free = ignorePast ? slot.bookedCount < slot.capacity : slot.available;
+  return free ? null : 'TAKEN';
+};
+
 const getBlockedDates = async () => {
   return prisma.blockedDate.findMany({ orderBy: { date: 'asc' } });
 };
@@ -112,4 +127,4 @@ const removeBlockedDate = async (id) => {
   return prisma.blockedDate.delete({ where: { id } });
 };
 
-module.exports = { getConfig, saveConfig, getAvailableSlots, getBlockedDates, addBlockedDate, removeBlockedDate, toIST };
+module.exports = { getConfig, saveConfig, getAvailableSlots, getBlockedDates, addBlockedDate, removeBlockedDate, toIST, checkSlot };

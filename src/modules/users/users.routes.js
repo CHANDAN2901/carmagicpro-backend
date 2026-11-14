@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', controller.getAll);
+router.get('/export', controller.exportExcel); // must precede '/:id'
 router.get('/:id', controller.getById);
 router.post('/', controller.create);
 router.patch('/:id', controller.update);
