@@ -1,6 +1,6 @@
 const prisma = require('../../config/prisma');
 const { generateEntityNumber } = require('../../utils/entityNumber');
-const { getPlan } = require('./memberships.plans');
+const { quotePlan } = require('./memberships.pricing');
 const { createInvoice, sendConfirmationEmailsOnce } = require('../payments/payments.service');
 const couponsService = require('../coupons/coupons.service');
 
@@ -26,21 +26,26 @@ const attachPayments = async (memberships) => {
   return memberships.map((m) => ({ ...m, payment: byEntity[m.id] ?? null }));
 };
 
-// Customer: create a PENDING membership snapshotting the chosen static plan.
-// Activation (ACTIVE + expiry) happens later, on successful payment.
-const create = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, plateNumber, address }) => {
-  const plan = getPlan(planKey);
-  if (!plan) throw Object.assign(new Error('Invalid plan'), { statusCode: 400 });
+// The plan fields snapshotted onto a membership row from a server-side quote.
+const planData = (plan) => ({
+  planKey: plan.planKey,
+  planName: plan.name,
+  washesPerYear: plan.washesPerYear,
+  price: plan.price,
+  planItems: plan.planItems,
+});
+
+// Customer: create a PENDING membership snapshotting the quoted plan (priced for
+// the chosen vehicle type). Activation (ACTIVE + expiry) happens on payment.
+const create = async ({ userId, vehicleTypeId, carModelId, fuelType, plateNumber, address, ...planInput }) => {
+  const plan = await quotePlan(planInput, vehicleTypeId);
 
   const membershipNumber = await generateEntityNumber('MEMBERSHIP');
   return prisma.membership.create({
     data: {
       membershipNumber,
       userId,
-      planKey: plan.planKey,
-      planName: plan.name,
-      washesPerYear: plan.washesPerYear,
-      price: plan.price,
+      ...planData(plan),
       status: 'PENDING',
       vehicleTypeId,
       carModelId: carModelId ?? null,
@@ -54,9 +59,8 @@ const create = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, pl
 // Admin: manual entry for a membership paid in person (cash/card swipe).
 // Activates immediately and creates a matching MANUAL/CAPTURED Payment + Invoice,
 // mirroring bookings.service.create's manual path — no Razorpay/COD flow involved.
-const createManual = async ({ userId, planKey, vehicleTypeId, carModelId, fuelType, plateNumber, address, paymentMethod, couponCode }) => {
-  const plan = getPlan(planKey);
-  if (!plan) throw Object.assign(new Error('Invalid plan'), { statusCode: 400 });
+const createManual = async ({ userId, vehicleTypeId, carModelId, fuelType, plateNumber, address, paymentMethod, couponCode, ...planInput }) => {
+  const plan = await quotePlan(planInput, vehicleTypeId);
   // Optional coupon, validated like the customer checkout; stored on the Payment.
   const { userPhone, ...paymentAmounts } = await couponsService.paymentFieldsFor({ code: couponCode, amount: plan.price, userId, plateNumber });
 
@@ -70,10 +74,7 @@ const createManual = async ({ userId, planKey, vehicleTypeId, carModelId, fuelTy
       data: {
         membershipNumber,
         userId,
-        planKey: plan.planKey,
-        planName: plan.name,
-        washesPerYear: plan.washesPerYear,
-        price: plan.price,
+        ...planData(plan),
         status: 'ACTIVE',
         startDate,
         expiresAt,

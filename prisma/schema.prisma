@@ -138,6 +138,7 @@ model VehicleType {
   carModels          CarModel[]
   bookings           Booking[]
   memberships        Membership[]
+  membershipPrices   MembershipTierPrice[]
   defaultForServices Service[]        @relation("ServiceDefaultVehicleType")
 
   @@map("vehicle_types")
@@ -459,6 +460,8 @@ model Membership {
   planName         String           @map("plan_name")
   washesPerYear    Int              @map("washes_per_year")
   price            Decimal          @db.Decimal(10, 2)
+  // Snapshot of what was bought: [{ tierId, name, count, mrp }] (fixed plans have one item).
+  planItems        Json?            @map("plan_items")
   status           MembershipStatus @default(PENDING)
   vehicleTypeId    String?          @map("vehicle_type_id")
   carModelId       String?          @map("car_model_id")
@@ -478,6 +481,41 @@ model Membership {
   @@index([status])
   @@index([expiresAt])
   @@map("memberships")
+}
+
+// Admin-managed membership tiers (Essential / Complete / Luxury ...). Each tier is
+// sold as fixed 12/24-wash annual plans or mixed into a CUSTOM plan; prices are
+// computed from the per-car-type MRP (memberships.pricing.js).
+model MembershipTier {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  features    String[] @default([])
+  // MRP of one wash for car types without a MembershipTierPrice row.
+  defaultMrp  Decimal  @map("default_mrp") @db.Decimal(10, 2)
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  prices MembershipTierPrice[]
+
+  @@index([isActive])
+  @@map("membership_tiers")
+}
+
+model MembershipTierPrice {
+  id            String  @id @default(cuid())
+  tierId        String  @map("tier_id")
+  vehicleTypeId String  @map("vehicle_type_id")
+  mrp           Decimal @db.Decimal(10, 2)
+
+  tier        MembershipTier @relation(fields: [tierId], references: [id], onDelete: Cascade)
+  vehicleType VehicleType    @relation(fields: [vehicleTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([tierId, vehicleTypeId])
+  @@map("membership_tier_prices")
 }
 
 // ─── Payments ────────────────────────────────────────────

@@ -1,13 +1,17 @@
 const membershipsService = require('./memberships.service');
-const { createMembershipSchema, createMembershipAdminSchema, listMembershipsQuerySchema } = require('./memberships.schema');
-const { PLANS } = require('./memberships.plans');
+const { createMembershipSchema, createMembershipAdminSchema, plansQuerySchema, listMembershipsQuerySchema } = require('./memberships.schema');
+const { getCatalog } = require('./memberships.pricing');
 const { parseDateRange, buildWorkbook, sendWorkbook } = require('../../utils/excel');
 
 const DATE_FMT = 'dd-mm-yyyy hh:mm';
 
-// Public: the static plan catalog the customer site renders / validates against.
-const getPlans = async (_req, res) => {
-  res.json({ success: true, plans: Object.values(PLANS) });
+// Public: active tiers with 12/24-wash prices for one car type (default MRP when
+// vehicleTypeId is omitted or has no price set), plus the custom-plan rules.
+const getPlans = async (req, res, next) => {
+  try {
+    const { vehicleTypeId } = plansQuerySchema.parse(req.query);
+    res.json({ success: true, ...(await getCatalog(vehicleTypeId)) });
+  } catch (err) { next(err); }
 };
 
 // Customer: create a PENDING membership for the logged-in user.

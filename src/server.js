@@ -26,6 +26,7 @@ const invoicesRoutes = require('./modules/invoices/invoices.routes');
 const uploadRoutes = require('./modules/upload/upload.routes');
 const customerRoutes = require('./modules/customer/customer.routes');
 const paymentSettingsRoutes = require('./modules/paymentSettings/paymentSettings.routes');
+const membershipTiersRoutes = require('./modules/membershipTiers/membershipTiers.routes');
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use('/api/products', productsRoutes);
 app.use('/api/bookings', bookingsRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/memberships', membershipsRoutes);
+app.use('/api/membership-tiers', membershipTiersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vehicle-types', vehicleTypesRoutes);
 app.use('/api/car-brands', carBrandsRoutes);
