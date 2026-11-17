@@ -470,14 +470,15 @@ const captureAndConfirm = async (payment, { razorpayPaymentId, method, trigger }
   }
 };
 
-// ── Admin: create a Razorpay Payment Link for a manual booking ──────────
+// ── Admin: create a Razorpay Payment Link for a manual booking/membership ──
 // Razorpay hosts the payment page and, when a customer email/phone is given,
 // notifies the customer by email + SMS itself — no separate mailer/SMS code
 // needed. The admin UI also gets the raw short_url back to copy and share.
 // `amount` is what the customer pays; grossAmount/discount/coupon are set when an
 // admin applied a coupon (usage is recorded on capture, in captureAndConfirm).
 const createPaymentLink = async ({
-  bookingId, userId, amount, grossAmount = amount, discountAmount = 0, couponId = null, couponCode = null,
+  entityType = 'BOOKING', entityId, userId, description,
+  amount, grossAmount = amount, discountAmount = 0, couponId = null, couponCode = null,
 }) => {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true, phone: true } });
 
@@ -485,6 +486,7 @@ const createPaymentLink = async ({
   const link = await razorpay.paymentLink.create({
     amount: Math.round(amount * 100),
     currency: 'INR',
+    ...(description && { description }),
     customer: { name: user?.name, email: user?.email || undefined, contact: user?.phone || undefined },
     notify: { sms: true, email: true },
     reminder_enable: true,
@@ -492,8 +494,8 @@ const createPaymentLink = async ({
 
   const payment = await prisma.payment.create({
     data: {
-      entityType: 'BOOKING',
-      entityId: bookingId,
+      entityType,
+      entityId,
       userId,
       provider: 'RAZORPAY',
       status: 'CREATED',
@@ -512,6 +514,14 @@ const createPaymentLink = async ({
   });
 
   return { paymentId: payment.id, shortUrl: link.short_url, paymentLinkId: link.id };
+};
+
+// ── Admin: cancel an unpaid payment link (before deleting its entity) ──
+// Throws if Razorpay refuses (e.g. the link was paid meanwhile), so the caller
+// never deletes something the customer has already paid for.
+const cancelPaymentLink = async (paymentLinkId) => {
+  const razorpay = await getRazorpay();
+  await razorpay.paymentLink.cancel(paymentLinkId);
 };
 
 // ── Admin: manually recheck a payment link's status (webhook fallback) ──
@@ -734,5 +744,5 @@ const initiateRefund = async (id, { amount, reason }) => {
 
 module.exports = {
   createOrder, verifyPayment, getAll, getById, getByEntity, codCollect, initiateRefund, createInvoice, buildLineItemsSnapshot,
-  createPaymentLink, recheckPaymentLink, captureAndConfirm, sendConfirmationEmailsOnce,
+  createPaymentLink, cancelPaymentLink, recheckPaymentLink, captureAndConfirm, sendConfirmationEmailsOnce,
 };

@@ -118,7 +118,7 @@ const create = async (data) => {
   // by the payment_link.paid webhook, or the admin's manual recheck).
   if (paymentMethod === 'PAYMENT_LINK') {
     const booking = await prisma.$transaction((tx) => insertBooking(tx, 'PENDING'));
-    const link = await createPaymentLink({ bookingId: booking.id, userId: booking.userId, ...paymentAmounts });
+    const link = await createPaymentLink({ entityType: 'BOOKING', entityId: booking.id, userId: booking.userId, ...paymentAmounts });
     return { ...booking, paymentLink: link };
   }
 

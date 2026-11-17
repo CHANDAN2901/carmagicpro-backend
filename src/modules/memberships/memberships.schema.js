@@ -36,7 +36,8 @@ const createMembershipAdminSchema = z.intersection(planSchema, z.object({
   fuelType: z.string().optional(),
   plateNumber: z.string().optional(),
   address: z.string().optional(),
-  paymentMethod: z.enum(['CASH', 'CARD']),
+  // PAYMENT_LINK = membership stays PENDING; a Razorpay link is sent to the customer.
+  paymentMethod: z.enum(['CASH', 'CARD', 'PAYMENT_LINK']),
   couponCode: z.string().trim().min(1).optional(),
 }));
 

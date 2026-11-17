@@ -1,7 +1,7 @@
 const prisma = require('../../config/prisma');
 const { generateEntityNumber } = require('../../utils/entityNumber');
 const { quotePlan } = require('./memberships.pricing');
-const { createInvoice, sendConfirmationEmailsOnce } = require('../payments/payments.service');
+const { createInvoice, createPaymentLink, cancelPaymentLink, sendConfirmationEmailsOnce } = require('../payments/payments.service');
 const couponsService = require('../coupons/coupons.service');
 
 const vehicleInclude = {
@@ -56,13 +56,42 @@ const create = async ({ userId, vehicleTypeId, carModelId, fuelType, plateNumber
   });
 };
 
-// Admin: manual entry for a membership paid in person (cash/card swipe).
-// Activates immediately and creates a matching MANUAL/CAPTURED Payment + Invoice,
-// mirroring bookings.service.create's manual path — no Razorpay/COD flow involved.
+// Admin: manual entry for a membership.
+//   CASH / CARD   — paid in person: activates immediately with a MANUAL/CAPTURED
+//                   Payment + Invoice (mirrors bookings.service.create's manual path).
+//   PAYMENT_LINK  — stays PENDING; a Razorpay payment link is sent to the customer.
+//                   payments.captureAndConfirm activates it when paid (webhook or
+//                   the admin's "recheck link" in Payments).
 const createManual = async ({ userId, vehicleTypeId, carModelId, fuelType, plateNumber, address, paymentMethod, couponCode, ...planInput }) => {
   const plan = await quotePlan(planInput, vehicleTypeId);
   // Optional coupon, validated like the customer checkout; stored on the Payment.
   const { userPhone, ...paymentAmounts } = await couponsService.paymentFieldsFor({ code: couponCode, amount: plan.price, userId, plateNumber });
+
+  if (paymentMethod === 'PAYMENT_LINK') {
+    const membership = await prisma.membership.create({
+      data: {
+        membershipNumber: await generateEntityNumber('MEMBERSHIP'),
+        userId,
+        ...planData(plan),
+        status: 'PENDING',
+        vehicleTypeId: vehicleTypeId ?? null,
+        carModelId: carModelId ?? null,
+        fuelType: fuelType ?? null,
+        plateNumber: plateNumber ?? null,
+        address: address ?? null,
+      },
+    });
+    try {
+      const paymentLink = await createPaymentLink({
+        entityType: 'MEMBERSHIP', entityId: membership.id, userId, description: plan.name, ...paymentAmounts,
+      });
+      return { ...membership, paymentLink };
+    } catch (err) {
+      // No link → nothing for the customer to pay; don't leave an orphan PENDING row.
+      await prisma.membership.delete({ where: { id: membership.id } }).catch(() => {});
+      throw err;
+    }
+  }
 
   const membershipNumber = await generateEntityNumber('MEMBERSHIP');
   const startDate = new Date();
@@ -183,6 +212,19 @@ const remove = async (id) => {
   });
   if (membership.status !== 'PENDING' || paid > 0) {
     throw Object.assign(new Error('Only unpaid PENDING memberships can be deleted'), { statusCode: 409 });
+  }
+  // An unpaid payment link is still payable at Razorpay — cancel it first so the
+  // customer can't pay for a membership that no longer exists.
+  const links = await prisma.payment.findMany({
+    where: { entityType: 'MEMBERSHIP', entityId: id, status: 'CREATED', razorpayPaymentLinkId: { not: null } },
+    select: { razorpayPaymentLinkId: true },
+  });
+  for (const { razorpayPaymentLinkId } of links) {
+    try {
+      await cancelPaymentLink(razorpayPaymentLinkId);
+    } catch {
+      throw Object.assign(new Error('Could not cancel its payment link — use "Recheck link" in Payments, it may already be paid'), { statusCode: 409 });
+    }
   }
   await prisma.$transaction([
     prisma.payment.deleteMany({ where: { entityType: 'MEMBERSHIP', entityId: id } }), // payment logs cascade
