@@ -1,6 +1,10 @@
 const prisma = require('../../config/prisma');
 const { PAID_SERVICE } = require('../users/users.service');
 
+// A booking counts once it's confirmed (paid / admin-confirmed) and keeps counting
+// as it progresses; PENDING (unpaid hold) and CANCELLED never count.
+const CONFIRMED_BOOKING = { status: { in: ['CONFIRMED', 'IN_PROGRESS', 'COMPLETED'] } };
+
 const getStats = async () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -20,8 +24,8 @@ const getStats = async () => {
     prisma.user.count({ where: { role: 'CUSTOMER', createdAt: { lt: startOfMonth } } }),
     prisma.order.count(),
     prisma.order.count({ where: { createdAt: { lt: startOfMonth } } }),
-    prisma.booking.count(),
-    prisma.booking.count({ where: { createdAt: { lt: startOfMonth } } }),
+    prisma.booking.count({ where: CONFIRMED_BOOKING }),
+    prisma.booking.count({ where: { ...CONFIRMED_BOOKING, createdAt: { lt: startOfMonth } } }),
     prisma.payment.aggregate({ _sum: { amount: true }, where: { status: 'CAPTURED' } }),
     prisma.payment.aggregate({ _sum: { amount: true }, where: { status: 'CAPTURED', createdAt: { gte: startOfLastMonth, lte: endOfLastMonth } } }),
     prisma.order.findMany({
@@ -117,7 +121,7 @@ const getTrends = async ({ from, to } = {}) => {
 
   const [orders, bookings] = await Promise.all([
     prisma.order.findMany({ where, select: { createdAt: true } }),
-    prisma.booking.findMany({ where, select: { createdAt: true } }),
+    prisma.booking.findMany({ where: { ...where, ...CONFIRMED_BOOKING }, select: { createdAt: true } }),
   ]);
 
   // Build a zero-filled bucket for every day in the range.
