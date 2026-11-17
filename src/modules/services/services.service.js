@@ -18,10 +18,11 @@ const getAll = async ({ categoryId, isActive } = {}) => {
   if (categoryId) where.categoryId = categoryId;
   if (isActive !== undefined) where.isActive = isActive === 'true' || isActive === true;
 
+  // Cheapest first, everywhere services are listed (website, CRM, mobile app).
   return prisma.service.findMany({
     where,
     include: serviceInclude,
-    orderBy: { name: 'asc' },
+    orderBy: [{ price: 'asc' }, { name: 'asc' }],
   });
 };
 

@@ -5,6 +5,7 @@
 //   FIXED  — one tier × 12 or 24 washes/year, discounted by discounts[12|24]
 //   CUSTOM — a mix of tiers (12–24 washes total), discounted by discounts.custom
 // price = round(Σ mrp × washes × (1 − discount%)). The client price is never trusted.
+// Tiers are always listed cheapest first (per-wash MRP); sortOrder only breaks ties.
 
 const prisma = require('../../config/prisma');
 
@@ -21,6 +22,10 @@ const mrpFor = (tier, vehicleTypeId) =>
   Number(tier.prices?.find((p) => p.vehicleTypeId === vehicleTypeId)?.mrp ?? tier.defaultMrp);
 
 const discounted = (amount, pct) => Math.round((amount * (100 - pct)) / 100);
+
+// Cheapest first for this car type; sortOrder breaks ties. Stable, returns a copy.
+const byPrice = (tiers, vehicleTypeId) =>
+  [...tiers].sort((a, b) => mrpFor(a, vehicleTypeId) - mrpFor(b, vehicleTypeId) || a.sortOrder - b.sortOrder);
 
 const planKeyFor = (tier, washes) => `${tier.slug.toUpperCase().replace(/-/g, '_')}_${washes}`;
 
@@ -44,15 +49,12 @@ const quoteCustom = (tiers, items, vehicleTypeId, discounts) => {
   const counts = new Map();
   for (const { tierId, count } of items) counts.set(tierId, (counts.get(tierId) ?? 0) + count);
 
-  const planItems = [];
-  for (const [tierId, count] of counts) {
-    if (count <= 0) continue;
-    const tier = tiers.find((t) => t.id === tierId);
-    if (!tier) throw badRequest('One of the selected care plans is not available');
-    planItems.push({ tierId, name: tier.name, count, mrp: mrpFor(tier, vehicleTypeId), sortOrder: tier.sortOrder });
+  for (const tierId of counts.keys()) {
+    if (!tiers.some((t) => t.id === tierId)) throw badRequest('One of the selected care plans is not available');
   }
-  planItems.sort((a, b) => a.sortOrder - b.sortOrder);
-  planItems.forEach((i) => delete i.sortOrder);
+  const planItems = byPrice(tiers, vehicleTypeId)
+    .filter((t) => (counts.get(t.id) ?? 0) > 0)
+    .map((t) => ({ tierId: t.id, name: t.name, count: counts.get(t.id), mrp: mrpFor(t, vehicleTypeId) }));
 
   const washesPerYear = planItems.reduce((s, i) => s + i.count, 0);
   if (washesPerYear < CUSTOM_RANGE.min || washesPerYear > CUSTOM_RANGE.max) {
@@ -76,7 +78,7 @@ const quoteCustom = (tiers, items, vehicleTypeId, discounts) => {
 const buildCatalog = (tiers, discounts, vehicleTypeId) => ({
   discounts,
   custom: CUSTOM_RANGE,
-  tiers: tiers.map((tier) => ({
+  tiers: byPrice(tiers, vehicleTypeId).map((tier) => ({
     id: tier.id,
     slug: tier.slug,
     name: tier.name,
@@ -113,7 +115,7 @@ const getTiers = ({ activeOnly = false } = {}) =>
   prisma.membershipTier.findMany({
     where: activeOnly ? { isActive: true } : undefined,
     include: { prices: true },
-    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ defaultMrp: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
   });
 
 const getCatalog = async (vehicleTypeId) => {
@@ -157,6 +159,9 @@ if (require.main === module) {
   assert.strictEqual(custom.washesPerYear, 12);
   assert.strictEqual(custom.name, 'Custom Care — 10 Complete Care + 2 Luxury Care / 1 Year');
   assert.throws(() => quoteCustom(tiers, [{ tierId: 'c', count: 5 }], SEDAN, d), /12–24/);
+  // Listing is cheapest first even if sortOrder says otherwise.
+  const shuffled = [tier('l', 'luxury', 'Luxury Care', 4999, 5499, 1), tiers[1], tiers[0]];
+  assert.deepStrictEqual(buildCatalog(shuffled, d, SEDAN).tiers.map((t) => t.slug), ['essential', 'complete', 'luxury']);
   assert.throws(() => quoteCustom(tiers, [{ tierId: 'gone', count: 12 }], SEDAN, d), /not available/);
   console.log('memberships.pricing self-check OK');
 }
