@@ -58,6 +58,14 @@ const apply = async (req, res, next) => {
   }
 };
 
+const lookupWash = async (req, res, next) => {
+  try { res.json({ success: true, wash: await couponsService.lookupWash(req.params.code) }); } catch (err) { next(err); }
+};
+
+const redeemWash = async (req, res, next) => {
+  try { res.json({ success: true, wash: await couponsService.redeemWash(req.params.code) }); } catch (err) { next(err); }
+};
+
 const bulkRemove = async (req, res, next) => {
   try {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : []
@@ -69,4 +77,4 @@ const bulkRemove = async (req, res, next) => {
   }
 }
 
-module.exports = { getAll, getById, create, update, remove, bulkRemove, apply };
+module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, lookupWash, redeemWash };

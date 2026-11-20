@@ -8,6 +8,8 @@ router.post('/apply', controller.apply);
 
 router.use(authenticate);
 
+router.get('/wash/:code', controller.lookupWash);
+router.post('/wash/:code/redeem', controller.redeemWash);
 router.get('/', controller.getAll);
 router.get('/:id', controller.getById);
 router.post('/', controller.create);

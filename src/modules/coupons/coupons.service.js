@@ -148,6 +148,7 @@ const recordUsage = async (tx, { couponId, userPhone, plateNumber }) => {
     skipDuplicates: true,
   });
   if (count) await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } });
+  return count;
 };
 
 // A cancelled booking gives its membership wash back (used=false); un-cancelling
@@ -172,6 +173,46 @@ const setMembershipWashUsed = async (tx, bookingId, used) => {
   await recordUsage(tx, { couponId: payment.couponId, userPhone: payment.user.phone });
 };
 
+// ─── Counter redemption ──────────────────────────────────────────────────────
+// The member shows a wash code in person and staff redeem it directly — no booking.
+
+const lookupWash = async (code) => {
+  const c = await prisma.coupon.findUnique({
+    where: { code: code.trim().toUpperCase() },
+    include: {
+      usages: { select: { usedAt: true } },
+      membership: {
+        select: {
+          membershipNumber: true, planName: true, status: true, expiresAt: true, plateNumber: true,
+          user: { select: { name: true, phone: true } },
+          washCoupons: { select: { usedCount: true } },
+        },
+      },
+    },
+  });
+  if (!c?.membership) throw Object.assign(new Error('No membership wash coupon with this code'), { statusCode: 404 });
+  const m = c.membership;
+  return {
+    id: c.id, code: c.code, tierName: c.tierName, value: Number(c.value), validTo: c.validTo,
+    used: c.usedCount > 0, usedAt: c.usages[0]?.usedAt ?? null,
+    membership: {
+      membershipNumber: m.membershipNumber, planName: m.planName, status: m.status, expiresAt: m.expiresAt,
+      plateNumber: m.plateNumber, customerName: m.user.name, phone: m.user.phone,
+      washesTotal: m.washCoupons.length, washesLeft: m.washCoupons.filter((w) => !w.usedCount).length,
+    },
+  };
+};
+
+const redeemWash = async (code) => {
+  const wash = await lookupWash(code);
+  const { phone, plateNumber } = wash.membership;
+  // Same rules as redeeming at booking: membership active, within dates, unused.
+  await apply({ code: wash.code, amount: wash.value, userPhone: phone, entityType: 'BOOKING' });
+  const recorded = await prisma.$transaction((tx) => recordUsage(tx, { couponId: wash.id, userPhone: phone, plateNumber }));
+  if (!recorded) throw Object.assign(new Error('This wash coupon has already been used'), { statusCode: 409 });
+  return lookupWash(code);
+};
+
 const bulkRemove = async (ids) => {
   let deleted = 0
   const failed = []
@@ -181,4 +222,4 @@ const bulkRemove = async (ids) => {
   return { deleted, failed }
 }
 
-module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage, setMembershipWashUsed, paymentFieldsFor };
+module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage, setMembershipWashUsed, paymentFieldsFor, lookupWash, redeemWash };
