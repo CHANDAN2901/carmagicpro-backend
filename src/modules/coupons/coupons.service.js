@@ -213,6 +213,27 @@ const redeemWash = async (code) => {
   return lookupWash(code);
 };
 
+// Undo a counter redemption made by mistake. A wash used on a booking is given
+// back by cancelling that booking instead, so the booking and the wash stay in step.
+const undoWash = async (code) => {
+  const wash = await lookupWash(code);
+  if (!wash.used) throw bad('This wash coupon has not been used');
+  const payments = await prisma.payment.findMany({
+    where: { couponId: wash.id, entityType: 'BOOKING', status: { in: ['CAPTURED', 'COD_PENDING', 'AUTHORIZED'] } },
+    select: { entityId: true },
+  });
+  const booking = payments.length && await prisma.booking.findFirst({
+    where: { id: { in: payments.map((p) => p.entityId) }, status: { not: 'CANCELLED' } },
+    select: { id: true },
+  });
+  if (booking) throw Object.assign(new Error('This wash was used on a booking — cancel that booking to give it back'), { statusCode: 409 });
+  await prisma.$transaction(async (tx) => {
+    const { count } = await tx.couponUsage.deleteMany({ where: { couponId: wash.id } });
+    if (count) await tx.coupon.update({ where: { id: wash.id }, data: { usedCount: { decrement: count } } });
+  });
+  return lookupWash(code);
+};
+
 const bulkRemove = async (ids) => {
   let deleted = 0
   const failed = []
@@ -222,4 +243,4 @@ const bulkRemove = async (ids) => {
   return { deleted, failed }
 }
 
-module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage, setMembershipWashUsed, paymentFieldsFor, lookupWash, redeemWash };
+module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage, setMembershipWashUsed, paymentFieldsFor, lookupWash, redeemWash, undoWash };
