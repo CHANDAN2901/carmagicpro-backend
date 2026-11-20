@@ -10,6 +10,7 @@ const createCouponSchema = z.object({
   validFrom: z.string().min(1),
   validTo: z.string().min(1),
   isActive: z.boolean().optional(),
+  appliesTo: z.enum(['ALL', 'SERVICE', 'PRODUCT']).optional(),
 });
 
 const updateCouponSchema = z.object({
@@ -22,6 +23,7 @@ const updateCouponSchema = z.object({
   validFrom: z.string().min(1).optional(),
   validTo: z.string().min(1).optional(),
   isActive: z.boolean().optional(),
+  appliesTo: z.enum(['ALL', 'SERVICE', 'PRODUCT']).optional(),
 });
 
 const applyCouponSchema = z.object({
@@ -29,6 +31,7 @@ const applyCouponSchema = z.object({
   amount: z.number().positive(),
   userPhone: z.string().min(1),
   plateNumber: z.string().optional(),
+  entityType: z.enum(['BOOKING', 'ORDER', 'MEMBERSHIP']).optional(),
 });
 
 module.exports = { createCouponSchema, updateCouponSchema, applyCouponSchema };

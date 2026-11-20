@@ -132,7 +132,7 @@ const quotePlan = async (plan, vehicleTypeId) => {
   return quoteFixed(tier, plan.washes, vehicleTypeId, discounts);
 };
 
-module.exports = { DEFAULT_DISCOUNTS, FIXED_WASHES, CUSTOM_RANGE, getDiscounts, setDiscounts, getTiers, getCatalog, quotePlan };
+module.exports = { DEFAULT_DISCOUNTS, FIXED_WASHES, CUSTOM_RANGE, mrpFor, getDiscounts, setDiscounts, getTiers, getCatalog, quotePlan };
 
 // Self-check: `node src/modules/memberships/memberships.pricing.js` (no DB needed).
 if (require.main === module) {

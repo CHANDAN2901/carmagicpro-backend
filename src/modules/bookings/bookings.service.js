@@ -94,7 +94,10 @@ const create = async (data) => {
   // Payment (gross / discount / amount); booking.totalAmount stays the list price.
   const amounts = await couponsService.paymentFieldsFor({
     code: couponCode, amount: bookingData.totalAmount, userId: bookingData.userId, plateNumber: bookingData.plateNumber,
+    entityType: 'BOOKING',
   });
+  // Fully covered by a coupon (e.g. a membership wash): nothing to collect.
+  const free = amounts.amount === 0;
   const { userPhone, ...paymentAmounts } = amounts;
   const bookingNumber = await generateBookingNumber();
   const bookingInclude = {
@@ -116,7 +119,7 @@ const create = async (data) => {
   // Admin sends a Razorpay payment link instead of collecting payment in
   // person: booking stays PENDING until the customer actually pays (confirmed
   // by the payment_link.paid webhook, or the admin's manual recheck).
-  if (paymentMethod === 'PAYMENT_LINK') {
+  if (paymentMethod === 'PAYMENT_LINK' && !free) {
     const booking = await prisma.$transaction((tx) => insertBooking(tx, 'PENDING'));
     const link = await createPaymentLink({ entityType: 'BOOKING', entityId: booking.id, userId: booking.userId, ...paymentAmounts });
     return { ...booking, paymentLink: link };
@@ -135,7 +138,7 @@ const create = async (data) => {
         userId: booking.userId,
         provider: 'MANUAL',
         status: 'CAPTURED',
-        method: paymentMethod,
+        method: free ? 'OTHER' : paymentMethod,
         ...paymentAmounts,
         capturedAt: new Date(),
       },
@@ -152,7 +155,8 @@ const create = async (data) => {
   });
 
   // Same confirmation emails the customer gets after paying on the website.
-  sendConfirmationEmailsOnce(payment.id, { paymentMethod: paymentMethod === 'CARD' ? 'Card' : 'Cash', paymentStatus: 'Paid' })
+  const label = free ? `Coupon ${payment.couponCode}` : paymentMethod === 'CARD' ? 'Card' : 'Cash';
+  sendConfirmationEmailsOnce(payment.id, { paymentMethod: label, paymentStatus: 'Paid' })
     .catch((err) => console.error('[confirmation email] failed:', err?.message));
   return booking;
 };
@@ -164,6 +168,8 @@ const update = async (id, data) => {
   const moved = (payload.scheduledAt && payload.scheduledAt.getTime() !== existing.scheduledAt.getTime())
     || (data.serviceId && data.serviceId !== existing.serviceId)
     || (existing.status === 'CANCELLED' && data.status && data.status !== 'CANCELLED'); // un-cancel reclaims the slot
+  const cancelling = data.status === 'CANCELLED' && existing.status !== 'CANCELLED';
+  const uncancelling = existing.status === 'CANCELLED' && data.status && data.status !== 'CANCELLED';
 
   return prisma.$transaction(async (tx) => {
     if (moved && (data.status ?? existing.status) !== 'CANCELLED') {
@@ -173,6 +179,8 @@ const update = async (id, data) => {
         excludeBookingId: id,
       });
     }
+    // A membership wash goes back to the member when its booking is cancelled.
+    if (cancelling || uncancelling) await couponsService.setMembershipWashUsed(tx, id, uncancelling);
     return tx.booking.update({ where: { id }, data: payload });
   });
 };

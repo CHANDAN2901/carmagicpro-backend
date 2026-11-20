@@ -1,6 +1,7 @@
+const crypto = require('crypto');
 const prisma = require('../../config/prisma');
 const { generateEntityNumber } = require('../../utils/entityNumber');
-const { quotePlan } = require('./memberships.pricing');
+const { quotePlan, getTiers, mrpFor } = require('./memberships.pricing');
 const { createInvoice, createPaymentLink, cancelPaymentLink, sendConfirmationEmailsOnce } = require('../payments/payments.service');
 const couponsService = require('../coupons/coupons.service');
 
@@ -9,12 +10,58 @@ const vehicleInclude = {
   carModel: { select: { id: true, name: true, brand: { select: { name: true } } } },
 };
 
-// Attaches the related payment + invoice to a set of memberships. Memberships are
-// paid for through the shared Payment engine (entityType MEMBERSHIP, entityId =
-// membership.id), so the invoice lives on the payment, not on the membership row.
+// ─── Wash coupons ────────────────────────────────────────────────────────────
+// An ACTIVE membership carries one single-use coupon per wash (12/24, or the
+// custom total), worth that tier's per-wash MRP for the member's car. The member
+// (or the admin, for them) redeems one by entering its code when booking.
+
+// What was bought, per tier. Memberships sold before plan_items existed only have
+// planKey `${SLUG}_${washes}`, so look the tier up by slug.
+const washItems = async (m) => {
+  if (Array.isArray(m.planItems)) return m.planItems;
+  const slug = m.planKey.replace(/_\d+$/, '').toLowerCase().replace(/_/g, '-');
+  const tier = (await getTiers()).find((t) => t.slug === slug);
+  const mrp = tier ? mrpFor(tier, m.vehicleTypeId) : Math.round(Number(m.price) / m.washesPerYear);
+  return [{ name: tier?.name ?? m.planName, count: m.washesPerYear, mrp }];
+};
+
+// Idempotent: (membershipId, washNo) is unique, so a concurrent second call adds nothing.
+const issueWashCoupons = async (m) => {
+  let washNo = 0;
+  const data = (await washItems(m)).flatMap((item) => Array.from({ length: item.count }, () => ({
+    code: `MW${crypto.randomBytes(5).toString('hex').toUpperCase()}`,
+    type: 'FLAT',
+    value: item.mrp,
+    usageLimit: 1,
+    validFrom: m.startDate,
+    validTo: m.expiresAt,
+    membershipId: m.id,
+    tierName: item.name,
+    washNo: ++washNo,
+  })));
+  await prisma.coupon.createMany({ data, skipDuplicates: true });
+};
+
+const findWashCoupons = (ids) => prisma.coupon.findMany({
+  where: { membershipId: { in: ids } },
+  orderBy: { washNo: 'asc' },
+  select: { membershipId: true, code: true, tierName: true, value: true, usedCount: true, validTo: true, usages: { select: { usedAt: true } } },
+});
+
+// Attaches the related payment + invoice and the wash coupons to a set of
+// memberships. Memberships are paid for through the shared Payment engine
+// (entityType MEMBERSHIP, entityId = membership.id), so the invoice lives on the
+// payment. Coupons are issued here on first read of an ACTIVE membership, which
+// covers every activation path and the memberships sold before coupons existed.
 const attachPayments = async (memberships) => {
   if (memberships.length === 0) return memberships;
   const ids = memberships.map((m) => m.id);
+  let coupons = await findWashCoupons(ids);
+  const missing = memberships.filter((m) => m.status === 'ACTIVE' && !coupons.some((c) => c.membershipId === m.id));
+  if (missing.length) {
+    await Promise.all(missing.map(issueWashCoupons));
+    coupons = await findWashCoupons(ids);
+  }
   const payments = await prisma.payment.findMany({
     where: { entityType: 'MEMBERSHIP', entityId: { in: ids } },
     orderBy: { createdAt: 'desc' },
@@ -23,7 +70,22 @@ const attachPayments = async (memberships) => {
   // First (most recent) payment wins per membership.
   const byEntity = {};
   for (const p of payments) if (!byEntity[p.entityId]) byEntity[p.entityId] = p;
-  return memberships.map((m) => ({ ...m, payment: byEntity[m.id] ?? null }));
+  return memberships.map((m) => {
+    const washCoupons = coupons.filter((c) => c.membershipId === m.id).map((c) => ({
+      code: c.code,
+      tierName: c.tierName,
+      value: Number(c.value),
+      used: c.usedCount > 0,
+      usedAt: c.usages[0]?.usedAt ?? null,
+      validTo: c.validTo,
+    }));
+    return {
+      ...m,
+      payment: byEntity[m.id] ?? null,
+      washCoupons,
+      washesUsed: washCoupons.filter((c) => c.used).length,
+    };
+  });
 };
 
 // The plan fields snapshotted onto a membership row from a server-side quote.
@@ -65,7 +127,7 @@ const create = async ({ userId, vehicleTypeId, carModelId, fuelType, plateNumber
 const createManual = async ({ userId, vehicleTypeId, carModelId, fuelType, plateNumber, address, paymentMethod, couponCode, ...planInput }) => {
   const plan = await quotePlan(planInput, vehicleTypeId);
   // Optional coupon, validated like the customer checkout; stored on the Payment.
-  const { userPhone, ...paymentAmounts } = await couponsService.paymentFieldsFor({ code: couponCode, amount: plan.price, userId, plateNumber });
+  const { userPhone, ...paymentAmounts } = await couponsService.paymentFieldsFor({ code: couponCode, amount: plan.price, userId, plateNumber, entityType: 'MEMBERSHIP' });
 
   if (paymentMethod === 'PAYMENT_LINK') {
     const membership = await prisma.membership.create({

@@ -484,7 +484,7 @@ const sendOrderEmails = async (userId, order, data) => {
   // The coupon is applied later at payment; preview it so the email shows what they'll pay.
   let amount = Number(order.totalAmount);
   if (data.couponCode) {
-    amount = await couponsService.apply({ code: data.couponCode, amount, userPhone: user?.phone })
+    amount = await couponsService.apply({ code: data.couponCode, amount, userPhone: user?.phone, entityType: 'ORDER' })
       .then((c) => c.finalAmount, () => amount);
   }
 

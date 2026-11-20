@@ -139,7 +139,7 @@ model VehicleType {
   bookings           Booking[]
   memberships        Membership[]
   membershipPrices   MembershipTierPrice[]
-  defaultForServices Service[]        @relation("ServiceDefaultVehicleType")
+  defaultForServices Service[]             @relation("ServiceDefaultVehicleType")
 
   @@map("vehicle_types")
 }
@@ -292,29 +292,29 @@ enum BookingStatus {
 }
 
 model Booking {
-  id            String        @id @default(cuid())
-  bookingNumber String?       @unique @map("booking_number")
-  userId        String        @map("user_id")
-  serviceId     String        @map("service_id")
-  vehicleTypeId String?       @map("vehicle_type_id")
-  carModelId    String?       @map("car_model_id")
-  fuelType      FuelType?     @map("fuel_type")
-  plateNumber   String?       @map("plate_number")
-  status        BookingStatus @default(PENDING)
-  scheduledAt   DateTime      @map("scheduled_at")
-  notes         String?
+  id             String        @id @default(cuid())
+  bookingNumber  String?       @unique @map("booking_number")
+  userId         String        @map("user_id")
+  serviceId      String        @map("service_id")
+  vehicleTypeId  String?       @map("vehicle_type_id")
+  carModelId     String?       @map("car_model_id")
+  fuelType       FuelType?     @map("fuel_type")
+  plateNumber    String?       @map("plate_number")
+  status         BookingStatus @default(PENDING)
+  scheduledAt    DateTime      @map("scheduled_at")
+  notes          String?
   // Service address: formatted single line + the structured parts the apps send.
   address        String?
-  addressDetails Json?        @map("address_details")
-  isHomePickup   Boolean      @default(false) @map("is_home_pickup")
+  addressDetails Json?         @map("address_details")
+  isHomePickup   Boolean       @default(false) @map("is_home_pickup")
   // List price for the vehicle type at booking time; totalAmount is the price
   // after the service discount (coupon discounts live on the Payment).
-  originalPrice  Decimal?     @map("original_price") @db.Decimal(10, 2)
-  totalAmount   Decimal       @map("total_amount") @db.Decimal(10, 2)
-  beforeImages  String[]      @default([]) @map("before_images")
-  afterImages   String[]      @default([]) @map("after_images")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  originalPrice  Decimal?      @map("original_price") @db.Decimal(10, 2)
+  totalAmount    Decimal       @map("total_amount") @db.Decimal(10, 2)
+  beforeImages   String[]      @default([]) @map("before_images")
+  afterImages    String[]      @default([]) @map("after_images")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
 
   user        User         @relation(fields: [userId], references: [id])
   service     Service      @relation(fields: [serviceId], references: [id])
@@ -358,6 +358,13 @@ enum CouponType {
   PERCENT
 }
 
+// What a coupon can be used on: SERVICE = bookings + memberships, PRODUCT = shop orders.
+enum CouponScope {
+  ALL
+  SERVICE
+  PRODUCT
+}
+
 model Coupon {
   id             String     @id @default(cuid())
   code           String     @unique
@@ -370,12 +377,20 @@ model Coupon {
   validFrom      DateTime   @map("valid_from")
   validTo        DateTime   @map("valid_to")
   isActive       Boolean    @default(true) @map("is_active")
+  appliesTo      CouponScope @default(ALL) @map("applies_to")
+  // Membership wash coupons: one single-use coupon per wash of a membership,
+  // worth that tier's per-wash MRP, usable only by the member on a booking.
+  membershipId   String?    @map("membership_id")
+  tierName       String?    @map("tier_name")
+  washNo         Int?       @map("wash_no")
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
 
-  usages   CouponUsage[]
-  payments Payment[]
+  usages     CouponUsage[]
+  payments   Payment[]
+  membership Membership?   @relation(fields: [membershipId], references: [id], onDelete: Cascade)
 
+  @@unique([membershipId, washNo])
   @@map("coupons")
 }
 
@@ -476,6 +491,7 @@ model Membership {
   user        User         @relation(fields: [userId], references: [id])
   vehicleType VehicleType? @relation(fields: [vehicleTypeId], references: [id])
   carModel    CarModel?    @relation(fields: [carModelId], references: [id], onDelete: SetNull)
+  washCoupons Coupon[]
 
   @@index([userId])
   @@index([status])

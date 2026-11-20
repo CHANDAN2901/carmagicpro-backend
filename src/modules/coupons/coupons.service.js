@@ -2,7 +2,8 @@ const prisma = require('../../config/prisma');
 const { normalizePlate } = require('../../utils/plate');
 
 const getAll = async () => {
-  return prisma.coupon.findMany({ orderBy: { createdAt: 'desc' } });
+  // Membership wash coupons are listed on their membership, not here.
+  return prisma.coupon.findMany({ where: { membershipId: null }, orderBy: { createdAt: 'desc' } });
 };
 
 const getById = async (id) => {
@@ -36,14 +37,13 @@ const remove = async (id) => {
 };
 
 
-// Vehicle-plate takes priority when present (a booking has a specific vehicle);
-// falls back to phone-based tracking for plate-less bookings/memberships.
+// One use per customer: blocked if this phone OR this car has used it before
+// (so switching cars, or booking without a plate, doesn't allow a second use).
 const findUsage = async (couponId, userPhone, plateNumber) => {
   const plate = normalizePlate(plateNumber);
-  if (plate) {
-    return prisma.couponUsage.findUnique({ where: { couponId_plateNumber: { couponId, plateNumber: plate } } });
-  }
-  return prisma.couponUsage.findUnique({ where: { couponId_userPhone: { couponId, userPhone } } });
+  const OR = [userPhone && { userPhone }, plate && { plateNumber: plate }].filter(Boolean);
+  if (!OR.length) return null;
+  return prisma.couponUsage.findFirst({ where: { couponId, OR } });
 };
 
 const assertNotUsed = async ({ couponId, userPhone, plateNumber }) => {
@@ -53,11 +53,32 @@ const assertNotUsed = async ({ couponId, userPhone, plateNumber }) => {
   }
 };
 
-const apply = async ({ code, amount, userPhone, plateNumber }) => {
+const bad = (message) => Object.assign(new Error(message), { statusCode: 400 });
+
+// entityType ('BOOKING' | 'ORDER' | 'MEMBERSHIP') is what the coupon is being used
+// on; it's optional only for the public preview.
+const apply = async ({ code, amount, userPhone, plateNumber, entityType }) => {
   const coupon = await prisma.coupon.findUnique({ where: { code: code.toUpperCase() } });
 
   if (!coupon || !coupon.isActive) {
     throw Object.assign(new Error('Invalid or inactive coupon'), { statusCode: 400 });
+  }
+
+  // Service coupons work on bookings + memberships, product coupons on shop orders.
+  if (entityType && coupon.appliesTo !== 'ALL' && coupon.appliesTo !== (entityType === 'ORDER' ? 'PRODUCT' : 'SERVICE')) {
+    throw bad(coupon.appliesTo === 'PRODUCT' ? 'This coupon is valid only on products' : 'This coupon is valid only on services');
+  }
+
+  // A membership wash coupon: only its member, only on a service booking.
+  if (coupon.membershipId) {
+    if (entityType && entityType !== 'BOOKING') throw bad('Membership wash coupons can only be used on a service booking');
+    const membership = await prisma.membership.findUnique({
+      where: { id: coupon.membershipId },
+      select: { status: true, user: { select: { phone: true } } },
+    });
+    if (membership?.status !== 'ACTIVE') throw bad('This membership is not active');
+    if (!userPhone || membership.user.phone !== userPhone) throw bad("This coupon belongs to another customer's membership");
+    if (coupon.usedCount >= (coupon.usageLimit ?? 1)) throw bad('This wash coupon has already been used');
   }
 
   const now = new Date();
@@ -95,6 +116,7 @@ const apply = async ({ code, amount, userPhone, plateNumber }) => {
   return {
     couponId: coupon.id,
     code: coupon.code,
+    isMembershipWash: !!coupon.membershipId,
     discount,
     finalAmount: Math.max(0, amount - discount),
   };
@@ -102,11 +124,11 @@ const apply = async ({ code, amount, userPhone, plateNumber }) => {
 
 // Admin manual entry: validate `code` for this customer/car (same checks as the
 // customer checkout) and return the Payment fields to store. No code → no discount.
-const paymentFieldsFor = async ({ code, amount, userId, plateNumber }) => {
+const paymentFieldsFor = async ({ code, amount, userId, plateNumber, entityType }) => {
   const gross = Number(amount);
   if (!code) return { grossAmount: gross, discountAmount: 0, amount: gross, couponId: null, couponCode: null };
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
-  const applied = await apply({ code, amount: gross, userPhone: user?.phone, plateNumber });
+  const applied = await apply({ code, amount: gross, userPhone: user?.phone, plateNumber, entityType });
   return {
     grossAmount: gross,
     discountAmount: applied.discount,
@@ -117,19 +139,37 @@ const paymentFieldsFor = async ({ code, amount, userId, plateNumber }) => {
   };
 };
 
-// Call this when payment is captured to record usage. Upserts so retried
-// captures (webhook + verify racing) don't fail on the unique constraint.
+// Call this when payment is captured to record usage. Idempotent: a retried
+// capture (webhook + verify racing) neither fails on the unique constraints nor
+// counts the use twice.
 const recordUsage = async (tx, { couponId, userPhone, plateNumber }) => {
-  const plate = normalizePlate(plateNumber);
-  const where = plate
-    ? { couponId_plateNumber: { couponId, plateNumber: plate } }
-    : { couponId_userPhone: { couponId, userPhone } };
-  await tx.couponUsage.upsert({
-    where,
-    update: {},
-    create: { couponId, userPhone, plateNumber: plate },
+  const { count } = await tx.couponUsage.createMany({
+    data: [{ couponId, userPhone, plateNumber: normalizePlate(plateNumber) }],
+    skipDuplicates: true,
   });
-  await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } });
+  if (count) await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } });
+};
+
+// A cancelled booking gives its membership wash back (used=false); un-cancelling
+// takes it again (used=true), unless the member has used that coupon since.
+const setMembershipWashUsed = async (tx, bookingId, used) => {
+  const payment = await tx.payment.findFirst({
+    where: {
+      entityType: 'BOOKING', entityId: bookingId, status: { in: ['CAPTURED', 'COD_PENDING'] },
+      coupon: { membershipId: { not: null } },
+    },
+    select: { couponId: true, coupon: { select: { usedCount: true } }, user: { select: { phone: true } } },
+  });
+  if (!payment) return;
+  if (!used) {
+    const { count } = await tx.couponUsage.deleteMany({ where: { couponId: payment.couponId } });
+    if (count) await tx.coupon.update({ where: { id: payment.couponId }, data: { usedCount: { decrement: count } } });
+    return;
+  }
+  if (payment.coupon.usedCount > 0) {
+    throw Object.assign(new Error("This booking's membership wash coupon has been used again since — create a new booking instead"), { statusCode: 409 });
+  }
+  await recordUsage(tx, { couponId: payment.couponId, userPhone: payment.user.phone });
 };
 
 const bulkRemove = async (ids) => {
@@ -141,4 +181,4 @@ const bulkRemove = async (ids) => {
   return { deleted, failed }
 }
 
-module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage, paymentFieldsFor };
+module.exports = { getAll, getById, create, update, remove, bulkRemove, apply, assertNotUsed, recordUsage, setMembershipWashUsed, paymentFieldsFor };

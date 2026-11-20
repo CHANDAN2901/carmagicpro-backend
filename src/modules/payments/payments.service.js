@@ -323,6 +323,7 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
   let discountAmount = 0;
   let finalAmount = grossAmount;
   let couponCodeStored = null;
+  let reserveCoupon = async () => {};
   if (couponCode) {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
     const applied = await couponsService.apply({
@@ -330,11 +331,32 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
       amount: grossAmount,
       userPhone: user?.phone,
       plateNumber: entityType === 'BOOKING' ? plateNumber : undefined,
+      entityType,
     });
     couponId = applied.couponId;
     couponCodeStored = applied.code;
     discountAmount = applied.discount;
     finalAmount = applied.finalAmount;
+    // A membership wash is taken as soon as a COD booking uses it, so it can't
+    // be reused before the cash is collected (recordUsage is idempotent).
+    if (applied.isMembershipWash) {
+      reserveCoupon = () => couponsService.recordUsage(prisma, { couponId, userPhone: user.phone, plateNumber });
+    }
+  }
+
+  // Fully covered by a coupon (e.g. a membership wash): nothing to charge, and
+  // Razorpay can't take a ₹0 order — confirm right away.
+  if (finalAmount === 0) {
+    const payment = await prisma.payment.create({
+      data: {
+        entityType, entityId, userId, provider: 'MANUAL', status: 'CREATED', method: 'OTHER',
+        grossAmount, discountAmount, amount: 0, couponId, couponCode: couponCodeStored,
+      },
+    });
+    await captureAndConfirm(payment, {
+      method: 'OTHER', trigger: 'API:free_with_coupon', paymentLabel: `Coupon ${couponCodeStored ?? ''}`.trim(),
+    });
+    return { paymentId: payment.id, status: 'CAPTURED', method: 'FREE', amount: 0 };
   }
 
   // COD path
@@ -354,6 +376,7 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
         couponCode: couponCodeStored,
       },
     });
+    await reserveCoupon();
 
     await prisma.paymentLog.create({
       data: {
@@ -426,7 +449,7 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
 // "recheck link status" fallback. Idempotent (no-op if already CAPTURED) and
 // fires the same confirmation email dispatch used everywhere else, since a
 // payment link has no frontend /verify call to trigger it.
-const captureAndConfirm = async (payment, { razorpayPaymentId, method, trigger }) => {
+const captureAndConfirm = async (payment, { razorpayPaymentId, method, trigger, paymentLabel = 'Online (Razorpay)' }) => {
   if (payment.status === 'CAPTURED') return;
 
   await prisma.$transaction(async (tx) => {
@@ -465,7 +488,7 @@ const captureAndConfirm = async (payment, { razorpayPaymentId, method, trigger }
   });
 
   if (payment.entityType === 'BOOKING' || payment.entityType === 'MEMBERSHIP') {
-    sendConfirmationEmailsOnce(payment.id, { paymentMethod: 'Online (Razorpay)', paymentStatus: 'Paid' })
+    sendConfirmationEmailsOnce(payment.id, { paymentMethod: paymentLabel, paymentStatus: 'Paid' })
       .catch((err) => console.error('[confirmation email] failed:', err?.message));
   }
 };
