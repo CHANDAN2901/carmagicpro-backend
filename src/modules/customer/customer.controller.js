@@ -378,7 +378,8 @@ const createOrderSchema = z.object({
   })).min(1),
   address: z.string().min(1, 'Delivery address is required'),
   couponCode: z.string().optional(),
-  paymentMethod: z.enum(['COD', 'RAZORPAY']).default('COD'),
+  // Product orders are online-only — Cash on Delivery is not offered.
+  paymentMethod: z.literal('RAZORPAY', { error: 'Cash on Delivery is not available for products' }).default('RAZORPAY'),
   notes: z.string().optional(),
 });
 

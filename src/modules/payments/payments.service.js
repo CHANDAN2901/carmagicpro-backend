@@ -337,11 +337,9 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     couponCodeStored = applied.code;
     discountAmount = applied.discount;
     finalAmount = applied.finalAmount;
-    // A membership wash is taken as soon as a COD booking uses it, so it can't
-    // be reused before the cash is collected (recordUsage is idempotent).
-    if (applied.isMembershipWash) {
-      reserveCoupon = () => couponsService.recordUsage(prisma, { couponId, userPhone: user.phone, plateNumber });
-    }
+    // A COD payment takes the coupon as soon as it's placed, so it can't be
+    // reused before the cash is collected (or if it's never marked collected).
+    reserveCoupon = () => couponsService.recordUsage(prisma, { couponId, userPhone: user.phone, plateNumber });
   }
 
   // Fully covered by a coupon (e.g. a membership wash): nothing to charge, and
@@ -359,8 +357,17 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
     return { paymentId: payment.id, status: 'CAPTURED', method: 'FREE', amount: 0 };
   }
 
+  // Product orders are online-only — never confirm one as COD.
+  if (method === 'COD' && entityType === 'ORDER') {
+    throw Object.assign(new Error('Cash on Delivery is not available for products'), { statusCode: 400 });
+  }
+
   // COD path
   if (method === 'COD') {
+    // Take the coupon first: 0 rows means a parallel request already used it.
+    if (couponId && !(await reserveCoupon())) {
+      throw Object.assign(new Error('You have already used this coupon'), { statusCode: 400 });
+    }
     const payment = await prisma.payment.create({
       data: {
         entityType,
@@ -376,7 +383,6 @@ const createOrder = async ({ entityType, entityId, userId, couponCode, method })
         couponCode: couponCodeStored,
       },
     });
-    await reserveCoupon();
 
     await prisma.paymentLog.create({
       data: {
