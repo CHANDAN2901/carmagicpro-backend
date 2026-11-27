@@ -363,6 +363,7 @@ enum CouponScope {
   ALL
   SERVICE
   PRODUCT
+  MEMBERSHIP
 }
 
 model Coupon {

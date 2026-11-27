@@ -64,9 +64,11 @@ const apply = async ({ code, amount, userPhone, plateNumber, entityType }) => {
     throw Object.assign(new Error('Invalid or inactive coupon'), { statusCode: 400 });
   }
 
-  // Service coupons work on bookings + memberships, product coupons on shop orders.
-  if (entityType && coupon.appliesTo !== 'ALL' && coupon.appliesTo !== (entityType === 'ORDER' ? 'PRODUCT' : 'SERVICE')) {
-    throw bad(coupon.appliesTo === 'PRODUCT' ? 'This coupon is valid only on products' : 'This coupon is valid only on services');
+  // Service coupons work on bookings, membership coupons on memberships, product coupons on shop orders.
+  const SCOPE_OF = { BOOKING: 'SERVICE', MEMBERSHIP: 'MEMBERSHIP', ORDER: 'PRODUCT' };
+  const SCOPE_NAME = { SERVICE: 'services', MEMBERSHIP: 'memberships', PRODUCT: 'products' };
+  if (entityType && coupon.appliesTo !== 'ALL' && coupon.appliesTo !== SCOPE_OF[entityType]) {
+    throw bad(`This coupon is valid only on ${SCOPE_NAME[coupon.appliesTo]}`);
   }
 
   // A membership wash coupon: only its member, only on a service booking.
